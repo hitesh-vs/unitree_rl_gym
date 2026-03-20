@@ -10,7 +10,7 @@ env:
 
 model:
   # Observation / action dimensions – overridden automatically at runtime
-  obs_dim: 47
+  obs_dim: 131  # 47 proprioceptive + num_actions (12) × 7 morpho features
   act_dim: 12
   # Number of limbs = graph nodes – overridden from URDF at runtime
   num_limbs: 13
@@ -22,8 +22,8 @@ model:
   gcn_hidden_dims: [64]
   gcn_output_dim: 32
   # Input node feature dim – overridden from graph parser at runtime
-  # topological mode produces 3 features (degree, norm_degree, norm_depth)
-  node_feature_dim: 3
+  # topological mode (3) + per-link inertial context (7) = 10
+  node_feature_dim: 10
 
   # Transformer settings
   d_model: 128

@@ -146,27 +146,116 @@ def normalize_adjacency(adj_matrix):
     return D_inv_sqrt @ adj_matrix @ D_inv_sqrt
 
 
-def build_graph_tensors(urdf_path, mode='onehot', device='cpu'):
-    """Build all graph tensors from a URDF file.
+def parse_link_morphology(urdf_path):
+    """Parse per-link inertial properties from a URDF file.
 
-    Parses the URDF, computes node features and the normalised adjacency
-    matrix, and returns everything as PyTorch tensors on the requested device.
+    Extracts mass, diagonal inertia (ixx, iyy, izz) and centre-of-mass
+    position (x, y, z) for each link, ordered to match the node list
+    returned by :func:`parse_urdf_graph`.  Missing or zero-valued
+    inertial elements are left as zero.
 
     Args:
         urdf_path (str): Path to the URDF file.
-        mode (str): Node feature mode ('none', 'onehot', or 'topological').
+
+    Returns:
+        numpy.ndarray: Feature matrix of shape ``(num_nodes, 7)`` with
+            columns ``[mass, ixx, iyy, izz, com_x, com_y, com_z]``.
+            Values are raw (un-normalised).
+    """
+    tree = ET.parse(urdf_path)
+    root = tree.getroot()
+
+    links = [link.get('name') for link in root.findall('link')]
+    features = np.zeros((len(links), 7), dtype=np.float32)
+
+    for i, link_el in enumerate(root.findall('link')):
+        inertial = link_el.find('inertial')
+        if inertial is None:
+            continue
+
+        mass_el = inertial.find('mass')
+        if mass_el is not None:
+            features[i, 0] = float(mass_el.get('value', 0.0))
+
+        inertia_el = inertial.find('inertia')
+        if inertia_el is not None:
+            features[i, 1] = float(inertia_el.get('ixx', 0.0))
+            features[i, 2] = float(inertia_el.get('iyy', 0.0))
+            features[i, 3] = float(inertia_el.get('izz', 0.0))
+
+        origin_el = inertial.find('origin')
+        if origin_el is not None:
+            xyz_str = origin_el.get('xyz', '0 0 0')
+            try:
+                xyz = [float(v) for v in xyz_str.strip().split()]
+                if len(xyz) >= 3:
+                    features[i, 4] = xyz[0]
+                    features[i, 5] = xyz[1]
+                    features[i, 6] = xyz[2]
+            except ValueError:
+                import warnings
+                warnings.warn(
+                    f"[parse_link_morphology] Could not parse COM xyz for link "
+                    f"'{link_el.get('name', '?')}': '{xyz_str}'. Using zeros.",
+                    stacklevel=2,
+                )
+
+    return features
+
+
+def normalize_link_morphology(features):
+    """Column-wise normalisation of link morphological features.
+
+    Each column is divided by its maximum absolute value.  Columns whose
+    maximum absolute value is zero are left unchanged.
+
+    Args:
+        features (numpy.ndarray): Raw feature matrix of shape ``(N, F)``.
+
+    Returns:
+        numpy.ndarray: Normalised feature matrix of the same shape.
+    """
+    normalised = features.copy()
+    col_maxes = np.abs(features).max(axis=0)
+    mask = col_maxes > 0
+    normalised[:, mask] /= col_maxes[mask]
+    return normalised
+
+
+def build_graph_tensors(urdf_path, mode='topological', device='cpu'):
+    """Build all graph tensors from a URDF file.
+
+    Parses the URDF, computes topology-based node features and the
+    normalised adjacency matrix.  Per-link inertial properties (mass,
+    diagonal inertia, and centre-of-mass position) are parsed from the
+    URDF, normalised column-wise, and concatenated with the topology
+    features to provide the GCN with richer structural context.
+
+    Args:
+        urdf_path (str): Path to the URDF file.
+        mode (str): Topology node feature mode
+            (``'none'``, ``'onehot'``, or ``'topological'``).
         device (str or torch.device): Target device for returned tensors.
 
     Returns:
         dict: Graph tensors:
-            - 'node_features': Tensor of shape (num_nodes, feature_dim)
-            - 'adj_normalized': Normalised adjacency tensor (num_nodes, num_nodes)
-            - 'num_nodes': int, number of nodes
-            - 'feature_dim': int, node feature dimension
+            - ``'node_features'``: Tensor of shape
+              ``(num_nodes, feature_dim)`` combining topology features and
+              per-link inertial context.
+            - ``'adj_normalized'``: Normalised adjacency tensor
+              ``(num_nodes, num_nodes)``.
+            - ``'num_nodes'``: int, number of nodes.
+            - ``'feature_dim'``: int, node feature dimension (topology
+              feature dim + 7 inertial features).
     """
     graph_data = parse_urdf_graph(urdf_path)
-    node_features = compute_node_features(graph_data, mode=mode)
+    topo_features = compute_node_features(graph_data, mode=mode)
     adj_normalized = normalize_adjacency(graph_data['adj_matrix'])
+
+    # Augment topology features with per-link inertial context
+    link_morpho_raw = parse_link_morphology(urdf_path)
+    link_morpho = normalize_link_morphology(link_morpho_raw)
+    node_features = np.concatenate([topo_features, link_morpho], axis=1)
 
     return {
         'node_features': torch.tensor(node_features, dtype=torch.float32, device=device),
