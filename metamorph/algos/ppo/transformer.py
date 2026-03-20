@@ -1,11 +1,23 @@
 """Transformer encoder layers for processing sequential robot limb observations.
 
 Implements multi-head self-attention with pre-norm residual connections and
-optional **fixed attention** – an adjacency-constrained attention mechanism
-where each limb token may only attend to its kinematically connected
-neighbours.  When enabled, the attention logits for non-adjacent pairs are
-masked to ``-∞`` before the softmax, fixing the *structure* of attention
-to the robot's kinematic graph while leaving the *values* fully learned.
+**fixed attention** driven by a structural context tensor (GCN embeddings).
+
+Fixed attention pattern (matching the reference ``TransformerEncoderLayerResidual``
+design):
+
+* When a ``context`` tensor is supplied, each encoder layer performs
+  **cross-attention**: Q and K are derived from ``norm_context(context)``
+  (the GCN structural embedding), while V comes from ``norm1(src)`` (the
+  actual limb observation sequence).  This "fixes" the attention routing to
+  the robot's kinematic structure while leaving the attended values fully
+  learned.
+* When ``context`` is ``None`` the layer degrades to standard self-attention:
+  Q = K = V = ``norm1(src)``.
+
+An additive adjacency mask (0.0 for allowed, ``-inf`` for blocked) can also be
+applied on top of either mode to restrict attention to kinematically adjacent
+limb pairs.
 
 Default hyperparameters (also reflected in ``config/g1/default.yaml``):
 
@@ -17,120 +29,222 @@ Default hyperparameters (also reflected in ``config/g1/default.yaml``):
 * ``use_fixed_attention = True``
 """
 
-import math
+import copy
+import warnings
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.modules import ModuleList
 
 
-class MultiHeadSelfAttention(nn.Module):
-    """Multi-head self-attention with optional fixed (topology-masked) attention.
+def _get_clones(module, N):
+    return ModuleList([copy.deepcopy(module) for _ in range(N)])
 
-    When a boolean ``attn_mask`` of shape ``(seq_len, seq_len)`` is supplied,
-    positions where the mask is ``False`` (non-adjacent limb pairs) have their
-    attention logits set to ``-1e9`` before softmax, preventing information
-    flow across kinematically disconnected joints.  Positions where the mask is
-    ``True`` are attended to normally, with weights learned through Q/K/V
-    projections.
 
-    This "fixed" structural constraint is the key difference from vanilla
-    self-attention: the *pattern* of allowable attention is fixed by the
-    robot topology, while the actual attention scores within that pattern
-    remain fully differentiable.
+def _get_activation_fn(activation):
+    if activation == "relu":
+        return F.relu
+    if activation == "gelu":
+        return F.gelu
+    raise ValueError(f"Unknown activation: '{activation}'")
+
+
+class TransformerEncoderLayerResidual(nn.Module):
+    """Single encoder layer with pre-norm residuals and optional fixed attention.
+
+    Mirrors the ``TransformerEncoderLayerResidual`` reference implementation.
+
+    When ``fix_attention=True`` a ``norm_context`` LayerNorm is added.  At
+    forward time, if a ``context`` tensor is provided the layer performs
+    cross-attention (Q=K from context, V from src).  If ``context`` is
+    ``None`` the layer falls back to standard self-attention.
+
+    Args:
+        d_model (int): Model dimension.
+        nhead (int): Number of attention heads.
+        dim_feedforward (int): Feed-forward hidden dimension (default: 1024).
+        dropout (float): Dropout probability (default: 0.0).
+        activation (str): Activation function – ``'relu'`` or ``'gelu'``
+            (default: ``'relu'``).
+        batch_first (bool): If ``True``, input/output shape is
+            ``(batch, seq, d_model)``; otherwise ``(seq, batch, d_model)``
+            (default: ``True``).
+        fix_attention (bool): Whether to allocate ``norm_context`` and support
+            context-based fixed attention (default: ``False``).
     """
 
-    def __init__(self, d_model, num_heads, dropout=0.0):
+    def __init__(
+        self,
+        d_model,
+        nhead,
+        dim_feedforward=1024,
+        dropout=0.0,
+        activation="relu",
+        batch_first=True,
+        fix_attention=False,
+    ):
         super().__init__()
-        if d_model % num_heads != 0:
-            raise ValueError(
-                f"d_model ({d_model}) must be divisible by num_heads ({num_heads})"
-            )
-        self.d_model = d_model
-        self.num_heads = num_heads
-        self.d_k = d_model // num_heads
-
-        self.q_proj = nn.Linear(d_model, d_model)
-        self.k_proj = nn.Linear(d_model, d_model)
-        self.v_proj = nn.Linear(d_model, d_model)
-        self.out_proj = nn.Linear(d_model, d_model)
+        self.self_attn = nn.MultiheadAttention(
+            d_model, nhead, dropout=dropout, batch_first=batch_first
+        )
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
 
-    def forward(self, x, attn_mask=None):
-        """Compute multi-head self-attention.
-
-        Args:
-            x (torch.Tensor): Input of shape (batch, seq_len, d_model).
-            attn_mask (torch.Tensor, optional): Boolean tensor of shape
-                ``(seq_len, seq_len)`` or ``(batch, num_heads, seq_len,
-                seq_len)``.  Entries that are ``False`` are masked to
-                ``-1e9`` (blocked attention), entries that are ``True``
-                are allowed.  Defaults to ``None`` (full self-attention).
-
-        Returns:
-            torch.Tensor: Output of shape (batch, seq_len, d_model).
-        """
-        batch_size, seq_len, _ = x.shape
-        sqrt_d_k = math.sqrt(self.d_k)
-
-        Q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.d_k).transpose(1, 2)
-        K = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.d_k).transpose(1, 2)
-        V = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.d_k).transpose(1, 2)
-
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / sqrt_d_k
-
-        if attn_mask is not None:
-            # Broadcast to (batch, num_heads, seq_len, seq_len)
-            if attn_mask.dim() == 2:
-                attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)
-            # False → blocked; mask those positions to -inf
-            scores = scores.masked_fill(~attn_mask, -1e9)
-
-        attn = self.dropout(F.softmax(scores, dim=-1))
-
-        out = (
-            torch.matmul(attn, V)
-            .transpose(1, 2)
-            .contiguous()
-            .view(batch_size, seq_len, self.d_model)
-        )
-        return self.out_proj(out)
-
-
-class TransformerEncoderLayer(nn.Module):
-    """Single transformer encoder layer with pre-norm residual connections.
-
-    Uses ReLU activation in the feed-forward sublayer and LayerNorm before
-    each sublayer (pre-norm architecture).
-    """
-
-    def __init__(self, d_model, num_heads, dim_feedforward=1024, dropout=0.0):
-        super().__init__()
-        self.self_attn = MultiHeadSelfAttention(d_model, num_heads, dropout)
-        self.ff = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim_feedforward, d_model),
-        )
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
 
-    def forward(self, x, attn_mask=None):
-        """Apply one transformer encoder layer.
+        self.fix_attention = fix_attention
+        # norm_context is only created when fixed attention is enabled
+        if fix_attention:
+            self.norm_context = nn.LayerNorm(d_model)
+
+        self.activation = _get_activation_fn(activation)
+
+    def forward(
+        self,
+        src,
+        src_mask=None,
+        src_key_padding_mask=None,
+        context=None,
+        return_attention=False,
+    ):
+        """Apply one encoder layer.
 
         Args:
-            x (torch.Tensor): Shape (batch, seq_len, d_model).
-            attn_mask (torch.Tensor, optional): Boolean attention mask of shape
-                ``(seq_len, seq_len)``; see
-                :class:`MultiHeadSelfAttention` for details.
+            src (torch.Tensor): Shape ``(batch, seq_len, d_model)`` when
+                ``batch_first=True``.
+            src_mask (torch.Tensor, optional): Additive float attention mask of
+                shape ``(seq_len, seq_len)``.  ``0.0`` = attend,
+                ``-inf`` = block.
+            src_key_padding_mask (torch.Tensor, optional): Per-batch key
+                padding mask of shape ``(batch, seq_len)``.
+            context (torch.Tensor, optional): Fixed structural context tensor
+                of shape ``(batch, seq_len, d_model)``.  When provided (and
+                ``fix_attention=True``), Q and K are both derived from
+                ``norm_context(context)`` (same tensor for both Q and K),
+                while V comes from ``norm1(src)``.  This fixes the attention
+                routing to the structural context (e.g. GCN embeddings).
+                When ``None`` the layer falls back to standard self-attention.
+            return_attention (bool): When ``True``, also returns the attention
+                weight tensor.
 
         Returns:
-            torch.Tensor: Same shape as input.
+            torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+                Updated ``src`` of the same shape, optionally with attention
+                weights ``(batch, seq_len, seq_len)``.
         """
-        x = x + self.dropout(self.self_attn(self.norm1(x), attn_mask))
-        x = x + self.dropout(self.ff(self.norm2(x)))
-        return x
+        src2 = self.norm1(src)
+
+        if self.fix_attention and context is not None:
+            # Fixed attention: Q=K=norm_context(context), V=norm1(src)
+            context_normed = self.norm_context(context)
+            src2, attn_weights = self.self_attn(
+                context_normed,
+                context_normed,
+                src2,
+                attn_mask=src_mask,
+                key_padding_mask=src_key_padding_mask,
+                need_weights=return_attention,
+            )
+        else:
+            # Standard self-attention: Q=K=V=norm1(src)
+            src2, attn_weights = self.self_attn(
+                src2,
+                src2,
+                src2,
+                attn_mask=src_mask,
+                key_padding_mask=src_key_padding_mask,
+                need_weights=return_attention,
+            )
+
+        src = src + self.dropout1(src2)
+        src2 = self.norm2(src)
+        src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
+        src = src + self.dropout2(src2)
+
+        if return_attention:
+            return src, attn_weights
+        return src
+
+
+class TransformerEncoder(nn.Module):
+    """Stack of :class:`TransformerEncoderLayerResidual` layers.
+
+    Mirrors the ``TransformerEncoder`` reference implementation, including the
+    ``get_attention_maps`` diagnostic method.
+
+    Args:
+        encoder_layer (TransformerEncoderLayerResidual): Prototype layer; deep
+            copies are made for each stack entry.
+        num_layers (int): Number of encoder layers.
+        norm (nn.Module, optional): Final normalisation layer.
+    """
+
+    __constants__ = ["norm"]
+
+    def __init__(self, encoder_layer, num_layers, norm=None):
+        super().__init__()
+        self.layers = _get_clones(encoder_layer, num_layers)
+        self.num_layers = num_layers
+        self.norm = norm
+
+    def forward(self, src, mask=None, src_key_padding_mask=None, context=None):
+        """Pass src through all encoder layers.
+
+        Args:
+            src (torch.Tensor): Input sequence.
+            mask (torch.Tensor, optional): Additive attention mask.
+            src_key_padding_mask (torch.Tensor, optional): Padding mask.
+            context (torch.Tensor, optional): Fixed structural context passed
+                to every layer (see :class:`TransformerEncoderLayerResidual`).
+
+        Returns:
+            torch.Tensor: Encoded sequence of the same shape as ``src``.
+        """
+        output = src
+        for layer in self.layers:
+            output = layer(
+                output,
+                src_mask=mask,
+                src_key_padding_mask=src_key_padding_mask,
+                context=context,
+            )
+        if self.norm is not None:
+            output = self.norm(output)
+        return output
+
+    def get_attention_maps(self, src, mask=None, src_key_padding_mask=None, context=None):
+        """Run forward pass and collect per-layer attention weights.
+
+        Args:
+            src (torch.Tensor): Input sequence.
+            mask (torch.Tensor, optional): Additive attention mask.
+            src_key_padding_mask (torch.Tensor, optional): Padding mask.
+            context (torch.Tensor, optional): Fixed structural context.
+
+        Returns:
+            tuple[torch.Tensor, list[torch.Tensor]]:
+                ``(output, attention_maps)`` where ``attention_maps[i]`` is
+                the attention weight tensor from layer ``i``.
+        """
+        attention_maps = []
+        output = src
+        for layer in self.layers:
+            output, attn_map = layer(
+                output,
+                src_mask=mask,
+                src_key_padding_mask=src_key_padding_mask,
+                context=context,
+                return_attention=True,
+            )
+            attention_maps.append(attn_map)
+        if self.norm is not None:
+            output = self.norm(output)
+        return output, attention_maps
 
 
 class TransformerModel(nn.Module):
@@ -138,28 +252,26 @@ class TransformerModel(nn.Module):
 
     Processes per-limb observations through:
 
-    1. Optional GCN structural embedding concatenation.
-    2. Limb embedding (linear projection to ``d_model``).
-    3. Transformer encoder layers (with optional fixed attention).
+    1. Limb embedding: linear projection of ``obs_per_limb`` → ``d_model``.
+    2. (If ``use_fixed_attention`` and GCN enabled) project GCN embeddings
+       ``gcn_output_dim`` → ``d_model`` to form the fixed attention context.
+    3. :class:`TransformerEncoder` with fixed attention context and optional
+       adjacency mask restricting attention to adjacent limb pairs.
     4. Output projection from flattened hidden states.
 
-    **Fixed attention** (enabled by ``use_fixed_attention=True``): the
-    adjacency mask derived from the robot's kinematic graph is passed to
-    every encoder layer.  Each limb token can only attend to its
-    kinematically adjacent neighbours.  The mask is supplied at call time
-    via the ``adj_mask`` argument to :meth:`forward`.
+    **Fixed attention** (``use_fixed_attention=True``):
+    GCN embeddings are projected to ``d_model`` and passed as ``context`` to
+    every encoder layer.  Inside each layer Q and K come from the GCN context
+    (normalised via ``norm_context``), while V comes from the observation
+    sequence.  This roots the *structure* of attention in the robot's kinematic
+    graph.  An additive adjacency mask additionally zeros out non-adjacent
+    attention weights.
+
+    When ``use_fixed_attention=False`` (or no GCN) the model reduces to a
+    standard pre-norm transformer with optional GCN concatenation.
 
     This class is used for both the actor and critic networks inside
     :class:`~metamorph.algos.ppo.model.ActorCritic`.
-
-    Default hyperparameters match the specification in
-    ``config/g1/default.yaml``:
-
-    * ``d_model = 128``
-    * ``num_heads = 2``
-    * ``num_layers = 5``
-    * ``dim_feedforward = 1024``
-    * ``use_fixed_attention = True``
     """
 
     def __init__(
@@ -186,13 +298,13 @@ class TransformerModel(nn.Module):
             num_layers (int): Number of transformer encoder layers.
             dim_feedforward (int): Feedforward layer dimension.
             dropout (float): Dropout probability.
-            output_dim (int, optional): Output dimension. Defaults to d_model.
-            use_gcn (bool): Whether to inject GCN structural embeddings.
-            gcn_output_dim (int): GCN embedding dimension (used when
-                use_gcn=True).
-            use_fixed_attention (bool): When ``True``, attention is restricted
-                to kinematically adjacent limb pairs using the adjacency mask
-                passed to :meth:`forward`.  Defaults to ``True``.
+            output_dim (int, optional): Output dimension (default: ``d_model``).
+            use_gcn (bool): Whether GCN embeddings are available.
+            gcn_output_dim (int): GCN output dimension.
+            use_fixed_attention (bool): When ``True``, GCN embeddings are used
+                as the fixed attention context (Q/K source) inside each encoder
+                layer.  When ``False``, GCN embeddings are concatenated to the
+                per-limb observations before the limb embedding.
         """
         super().__init__()
         self.num_limbs = num_limbs
@@ -200,55 +312,78 @@ class TransformerModel(nn.Module):
         self.obs_per_limb = obs_per_limb
         self.use_fixed_attention = use_fixed_attention
 
-        limb_embed_input = obs_per_limb + (gcn_output_dim if use_gcn else 0)
+        # When fixed attention is used, GCN embeddings are the context (not
+        # concatenated to obs), so limb_embed only takes obs_per_limb.
+        if use_gcn and not use_fixed_attention:
+            limb_embed_input = obs_per_limb + gcn_output_dim
+        else:
+            limb_embed_input = obs_per_limb
         self.limb_embed = nn.Linear(limb_embed_input, d_model)
 
-        self.encoder_layers = nn.ModuleList(
-            TransformerEncoderLayer(d_model, num_heads, dim_feedforward, dropout)
-            for _ in range(num_layers)
+        # Project GCN output → d_model to serve as fixed attention context
+        self._has_gcn_context_proj = use_gcn and use_fixed_attention
+        if self._has_gcn_context_proj:
+            self.gcn_context_proj = nn.Linear(gcn_output_dim, d_model)
+
+        encoder_layer = TransformerEncoderLayerResidual(
+            d_model=d_model,
+            nhead=num_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation="relu",
+            batch_first=True,
+            fix_attention=use_fixed_attention,
         )
-        self.norm = nn.LayerNorm(d_model)
+        self.encoder = TransformerEncoder(
+            encoder_layer=encoder_layer,
+            num_layers=num_layers,
+            norm=nn.LayerNorm(d_model),
+        )
 
         out_dim = output_dim if output_dim is not None else d_model
         self.output_proj = nn.Linear(d_model * num_limbs, out_dim)
 
     def _build_adj_attn_mask(self, adj_normalized):
-        """Convert a normalised adjacency matrix to a boolean attention mask.
+        """Build an additive float attention mask from a normalised adjacency.
 
-        Entries with a non-zero value in *adj_normalized* are ``True``
-        (attention allowed); zero entries are ``False`` (blocked).
+        Returns a ``(num_limbs, num_limbs)`` float tensor with ``0.0`` where
+        attention is allowed (adjacent or self) and ``-inf`` where it is
+        blocked (non-adjacent).  This format is directly consumed by
+        ``nn.MultiheadAttention`` as an additive ``attn_mask``.
 
-        Args:
-            adj_normalized (torch.Tensor): Shape (num_limbs, num_limbs).
-
-        Returns:
-            torch.Tensor: Boolean mask of shape (num_limbs, num_limbs) on the
-                same device as *adj_normalized*.
+        Self-loops are always kept (diagonal forced to 0.0).
         """
-        return (adj_normalized > 0)
+        mask = torch.full(
+            adj_normalized.shape,
+            float("-inf"),
+            dtype=adj_normalized.dtype,
+            device=adj_normalized.device,
+        )
+        # Allow adjacent nodes and self-connections
+        mask[adj_normalized > 0] = 0.0
+        n = adj_normalized.size(0)
+        mask[torch.arange(n), torch.arange(n)] = 0.0
+        return mask
 
     def forward(self, obs, gcn_embeddings=None, adj_mask=None):
         """Forward pass.
 
         Args:
-            obs (torch.Tensor): Shape (batch, num_limbs * obs_per_limb) or
-                (batch, num_limbs, obs_per_limb).
+            obs (torch.Tensor): Shape ``(batch, num_limbs * obs_per_limb)``
+                or ``(batch, num_limbs, obs_per_limb)``.
             gcn_embeddings (torch.Tensor, optional): Shape
-                (batch, num_limbs, gcn_output_dim).
-            adj_mask (torch.Tensor, optional): Boolean or float adjacency
-                tensor of shape ``(num_limbs, num_limbs)`` used to build the
-                fixed attention mask when ``use_fixed_attention`` is ``True``.
-                If ``None`` and fixed attention is enabled, full self-attention
-                is used as a fallback.
+                ``(batch, num_limbs, gcn_output_dim)``.
+            adj_mask (torch.Tensor, optional): Normalised adjacency matrix of
+                shape ``(num_limbs, num_limbs)``.  Used to build the additive
+                attention mask restricting attention to adjacent limb pairs.
 
         Returns:
-            torch.Tensor: Shape (batch, output_dim).
+            torch.Tensor: Shape ``(batch, output_dim)``.
         """
         if obs.dim() == 2:
             batch_size = obs.shape[0]
             usable = self.num_limbs * self.obs_per_limb
             if obs.shape[1] != usable:
-                import warnings
                 warnings.warn(
                     f"[TransformerModel] obs_dim ({obs.shape[1]}) is not a "
                     f"multiple of num_limbs ({self.num_limbs}) × obs_per_limb "
@@ -261,19 +396,23 @@ class TransformerModel(nn.Module):
             x = obs
             batch_size = x.shape[0]
 
-        if self.use_gcn and gcn_embeddings is not None:
+        # Concatenate GCN embeddings only in non-fixed-attention mode
+        if self.use_gcn and not self.use_fixed_attention and gcn_embeddings is not None:
             x = torch.cat([x, gcn_embeddings], dim=-1)
 
         x = self.limb_embed(x)
 
-        # Build fixed attention mask from adjacency matrix if requested
+        # Build fixed attention context from GCN embeddings
+        context = None
+        if self.use_fixed_attention and self._has_gcn_context_proj and gcn_embeddings is not None:
+            context = self.gcn_context_proj(gcn_embeddings)
+
+        # Build additive adjacency attention mask
         fixed_mask = None
-        if self.use_fixed_attention and adj_mask is not None:
+        if adj_mask is not None:
             fixed_mask = self._build_adj_attn_mask(adj_mask)
 
-        for layer in self.encoder_layers:
-            x = layer(x, fixed_mask)
-        x = self.norm(x)
+        x = self.encoder(x, mask=fixed_mask, context=context)
 
         x = x.contiguous().view(batch_size, -1)
         return self.output_proj(x)
