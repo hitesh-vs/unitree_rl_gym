@@ -1,0 +1,179 @@
+"""Transformer encoder layers for processing sequential robot limb observations.
+
+Implements multi-head self-attention with pre-norm residual connections,
+used as the backbone of the Transformer+GCN policy.
+"""
+
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class MultiHeadSelfAttention(nn.Module):
+    """Multi-head self-attention mechanism."""
+
+    def __init__(self, d_model, num_heads, dropout=0.0):
+        super().__init__()
+        if d_model % num_heads != 0:
+            raise ValueError(
+                f"d_model ({d_model}) must be divisible by num_heads ({num_heads})"
+            )
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads
+
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, mask=None):
+        """Compute multi-head self-attention.
+
+        Args:
+            x (torch.Tensor): Input of shape (batch, seq_len, d_model).
+            mask (torch.Tensor, optional): Boolean attention mask.
+
+        Returns:
+            torch.Tensor: Output of shape (batch, seq_len, d_model).
+        """
+        batch_size, seq_len, _ = x.shape
+        sqrt_d_k = math.sqrt(self.d_k)
+
+        Q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.d_k).transpose(1, 2)
+        K = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.d_k).transpose(1, 2)
+        V = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.d_k).transpose(1, 2)
+
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / sqrt_d_k
+        if mask is not None:
+            scores = scores.masked_fill(mask == 0, -1e9)
+        attn = self.dropout(F.softmax(scores, dim=-1))
+
+        out = (
+            torch.matmul(attn, V)
+            .transpose(1, 2)
+            .contiguous()
+            .view(batch_size, seq_len, self.d_model)
+        )
+        return self.out_proj(out)
+
+
+class TransformerEncoderLayer(nn.Module):
+    """Single transformer encoder layer with pre-norm residual connections."""
+
+    def __init__(self, d_model, num_heads, dim_feedforward=2048, dropout=0.0):
+        super().__init__()
+        self.self_attn = MultiHeadSelfAttention(d_model, num_heads, dropout)
+        self.ff = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_feedforward, d_model),
+        )
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, mask=None):
+        """Apply one transformer encoder layer.
+
+        Args:
+            x (torch.Tensor): Shape (batch, seq_len, d_model).
+            mask (torch.Tensor, optional): Boolean attention mask.
+
+        Returns:
+            torch.Tensor: Same shape as input.
+        """
+        x = x + self.dropout(self.self_attn(self.norm1(x), mask))
+        x = x + self.dropout(self.ff(self.norm2(x)))
+        return x
+
+
+class TransformerModel(nn.Module):
+    """Transformer-based model for processing per-limb observations.
+
+    Processes per-limb observations through:
+    1. Optional GCN structural embedding concatenation
+    2. Limb embedding (linear projection to d_model)
+    3. Transformer encoder layers
+    4. Output projection from flattened hidden states
+
+    This class is used for both the actor and critic networks inside
+    :class:`~metamorph.algos.ppo.model.ActorCritic`.
+    """
+
+    def __init__(
+        self,
+        obs_per_limb,
+        num_limbs,
+        d_model=128,
+        num_heads=4,
+        num_layers=2,
+        dim_feedforward=256,
+        dropout=0.0,
+        output_dim=None,
+        use_gcn=False,
+        gcn_output_dim=32,
+    ):
+        """Initialise the Transformer model.
+
+        Args:
+            obs_per_limb (int): Observation size per limb.
+            num_limbs (int): Number of limbs (graph nodes).
+            d_model (int): Transformer model dimension.
+            num_heads (int): Number of attention heads.
+            num_layers (int): Number of transformer encoder layers.
+            dim_feedforward (int): Feedforward layer dimension.
+            dropout (float): Dropout probability.
+            output_dim (int, optional): Output dimension. Defaults to d_model.
+            use_gcn (bool): Whether to inject GCN structural embeddings.
+            gcn_output_dim (int): GCN embedding dimension (used when use_gcn=True).
+        """
+        super().__init__()
+        self.num_limbs = num_limbs
+        self.use_gcn = use_gcn
+        self.obs_per_limb = obs_per_limb
+
+        limb_embed_input = obs_per_limb + (gcn_output_dim if use_gcn else 0)
+        self.limb_embed = nn.Linear(limb_embed_input, d_model)
+
+        self.encoder_layers = nn.ModuleList(
+            TransformerEncoderLayer(d_model, num_heads, dim_feedforward, dropout)
+            for _ in range(num_layers)
+        )
+        self.norm = nn.LayerNorm(d_model)
+
+        out_dim = output_dim if output_dim is not None else d_model
+        self.output_proj = nn.Linear(d_model * num_limbs, out_dim)
+
+    def forward(self, obs, gcn_embeddings=None):
+        """Forward pass.
+
+        Args:
+            obs (torch.Tensor): Shape (batch, num_limbs * obs_per_limb) or
+                (batch, num_limbs, obs_per_limb).
+            gcn_embeddings (torch.Tensor, optional): Shape
+                (batch, num_limbs, gcn_output_dim).
+
+        Returns:
+            torch.Tensor: Shape (batch, output_dim).
+        """
+        if obs.dim() == 2:
+            batch_size = obs.shape[0]
+            x = obs.view(batch_size, self.num_limbs, self.obs_per_limb)
+        else:
+            x = obs
+            batch_size = x.shape[0]
+
+        if self.use_gcn and gcn_embeddings is not None:
+            x = torch.cat([x, gcn_embeddings], dim=-1)
+
+        x = self.limb_embed(x)
+        for layer in self.encoder_layers:
+            x = layer(x)
+        x = self.norm(x)
+
+        x = x.contiguous().view(batch_size, -1)
+        return self.output_proj(x)
