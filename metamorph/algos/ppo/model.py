@@ -64,6 +64,8 @@ class ActorCritic(nn.Module):
         node_feature_dim = getattr(m, 'node_feature_dim', num_limbs)
 
         use_gcn = graph_mode in ('onehot', 'topological')
+        use_fixed_attention = getattr(m, 'use_fixed_attention', True)
+        gcn_normalization = getattr(m, 'gcn_normalization', 'layernorm')
 
         # Shared GCN for structural embeddings (used by both actor and critic)
         if use_gcn:
@@ -71,6 +73,7 @@ class ActorCritic(nn.Module):
                 input_dim=node_feature_dim,
                 hidden_dims=gcn_hidden,
                 output_dim=gcn_output_dim,
+                normalization=gcn_normalization,
             )
         else:
             self.gcn = None
@@ -85,6 +88,7 @@ class ActorCritic(nn.Module):
             dropout=dropout,
             use_gcn=use_gcn,
             gcn_output_dim=gcn_output_dim,
+            use_fixed_attention=use_fixed_attention,
         )
 
         self.actor = TransformerModel(**shared_kwargs, output_dim=act_dim)
@@ -102,16 +106,21 @@ class ActorCritic(nn.Module):
             batch_size (int): Number of environments.
 
         Returns:
-            torch.Tensor or None: Shape (batch_size, num_limbs, gcn_output_dim)
-                or ``None`` when the GCN is disabled.
+            tuple[torch.Tensor or None, torch.Tensor or None]:
+                ``(gcn_embeddings, adj_normalized)`` where
+                ``gcn_embeddings`` has shape
+                ``(batch_size, num_limbs, gcn_output_dim)`` or ``None``
+                when the GCN is disabled; and ``adj_normalized`` is the
+                ``(num_limbs, num_limbs)`` adjacency tensor used for
+                fixed attention (``None`` when not available).
         """
         if self.gcn is None:
-            return None
+            return None, None
         node_features = obs_dict['graph_node_features']
         adj = obs_dict['graph_adj_normalized']
         # (num_nodes, gcn_output_dim) -> (batch, num_nodes, gcn_output_dim)
         node_emb = self.gcn(node_features, adj)
-        return node_emb.unsqueeze(0).expand(batch_size, -1, -1)
+        return node_emb.unsqueeze(0).expand(batch_size, -1, -1), adj
 
     def forward(self, obs_dict):
         """Compute action distribution parameters and value estimate.
@@ -127,10 +136,10 @@ class ActorCritic(nn.Module):
                 ``(action_mean, action_std, value)`` each with batch dimension.
         """
         obs = obs_dict['proprioceptive']
-        gcn_embeddings = self._get_gcn_embeddings(obs_dict, obs.shape[0])
+        gcn_embeddings, adj = self._get_gcn_embeddings(obs_dict, obs.shape[0])
 
-        action_mean = self.actor(obs, gcn_embeddings)
-        value = self.critic(obs, gcn_embeddings)
+        action_mean = self.actor(obs, gcn_embeddings, adj_mask=adj)
+        value = self.critic(obs, gcn_embeddings, adj_mask=adj)
         action_std = self.log_std.exp().expand_as(action_mean)
 
         return action_mean, action_std, value

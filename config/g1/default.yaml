@@ -19,18 +19,21 @@ model:
   graph_mode: topological
 
   # GCN settings
-  gcn_hidden_dims: [64]
-  gcn_output_dim: 32
+  # 4 total layers: [input → hidden1 → hidden2 → hidden3 → output]
+  gcn_hidden_dims: [128, 64, 32]
+  gcn_output_dim: 23
+  gcn_normalization: layernorm
   # Input node feature dim – overridden from graph parser at runtime
   # topological mode (3) + per-link inertial context (7) = 10
   node_feature_dim: 10
 
   # Transformer settings
   d_model: 128
-  num_heads: 4
-  num_layers: 2
-  dim_feedforward: 256
+  num_heads: 2
+  num_layers: 5
+  dim_feedforward: 1024
   dropout: 0.0
+  use_fixed_attention: true
 
 ppo:
   lr: 3.0e-4

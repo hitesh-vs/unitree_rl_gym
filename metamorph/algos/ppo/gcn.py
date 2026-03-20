@@ -1,7 +1,8 @@
 """Graph Convolutional Network (GCN) for processing robot kinematic graphs.
 
 Implements a multi-layer GCN that transforms node features using normalised
-adjacency matrices to produce structural embeddings.
+adjacency matrices to produce structural embeddings.  Each hidden layer is
+followed by a ReLU activation and an optional LayerNorm for stable training.
 """
 
 import torch
@@ -38,25 +39,60 @@ class GCN(nn.Module):
 
     Processes a robot kinematic graph to produce structural node embeddings
     that capture connectivity patterns.
+
+    Each intermediate layer applies graph convolution followed by ReLU and an
+    optional normalisation (``'layernorm'`` or ``'none'``).  The final layer
+    applies graph convolution only (no activation or normalisation), following
+    standard GCN design.
+
+    Default hyperparameters (also reflected in ``config/g1/default.yaml``):
+
+    * 4 layers total (3 hidden + 1 output)
+    * ReLU activation
+    * LayerNorm after each hidden activation
+    * Output dimension: 23
     """
 
-    def __init__(self, input_dim, hidden_dims, output_dim, dropout=0.0):
+    def __init__(
+        self,
+        input_dim,
+        hidden_dims,
+        output_dim,
+        dropout=0.0,
+        normalization='layernorm',
+    ):
         """Initialise GCN layers.
 
         Args:
             input_dim (int): Input node feature dimension.
-            hidden_dims (list[int]): Hidden layer dimensions.
+            hidden_dims (list[int]): Hidden layer dimensions.  The total number
+                of graph conv layers equals ``len(hidden_dims) + 1``.
             output_dim (int): Output embedding dimension.
             dropout (float): Dropout probability applied between hidden layers.
+            normalization (str): Normalisation applied after each hidden
+                activation.  Supported values: ``'layernorm'`` (default),
+                ``'none'``.
         """
         super().__init__()
         self.dropout = dropout
+        self.normalization = normalization
 
         layer_dims = [input_dim] + list(hidden_dims) + [output_dim]
         self.layers = nn.ModuleList(
             GraphConvLayer(layer_dims[i], layer_dims[i + 1])
             for i in range(len(layer_dims) - 1)
         )
+
+        # LayerNorm for each hidden layer output.
+        # There are (len(layer_dims) - 2) hidden layers: one for each
+        # consecutive pair of layer_dims except the last output layer.
+        if normalization == 'layernorm':
+            self.norms = nn.ModuleList(
+                nn.LayerNorm(layer_dims[i + 1])
+                for i in range(len(layer_dims) - 2)
+            )
+        else:
+            self.norms = None
 
     def forward(self, node_features, adj_normalized):
         """Forward pass through all GCN layers.
@@ -74,7 +110,10 @@ class GCN(nn.Module):
         for i, layer in enumerate(self.layers):
             x = layer(x, adj_normalized)
             if i < len(self.layers) - 1:
+                # Hidden layers: ReLU → LayerNorm → Dropout
                 x = F.relu(x)
+                if self.norms is not None:
+                    x = self.norms[i](x)
                 if self.dropout > 0:
                     x = F.dropout(x, p=self.dropout, training=self.training)
         return x
