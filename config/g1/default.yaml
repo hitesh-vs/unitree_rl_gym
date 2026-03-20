@@ -6,7 +6,7 @@ seed: 42
 env:
   num_envs: 4096
   # Graph encoding mode: 'none' (disabled), 'onehot', or 'topological'
-  graph_mode: onehot
+  graph_mode: topological
 
 model:
   # Observation / action dimensions – overridden automatically at runtime
@@ -16,13 +16,14 @@ model:
   num_limbs: 13
 
   # Graph encoding mode (must match env.graph_mode)
-  graph_mode: onehot
+  graph_mode: topological
 
   # GCN settings
   gcn_hidden_dims: [64]
   gcn_output_dim: 32
   # Input node feature dim – overridden from graph parser at runtime
-  node_feature_dim: 13
+  # topological mode produces 3 features (degree, norm_degree, norm_depth)
+  node_feature_dim: 3
 
   # Transformer settings
   d_model: 128
