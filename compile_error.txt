@@ -1,0 +1,50 @@
+[Error] [carb] [Plugin: libcarb.gym.plugin.so] Could not load the dynamic library from /home/sviswasam/dr/isaacgym/python/isaacgym/_bindings/linux-x86_64/libcarb.gym.plugin.so. Error: libcuda.so.1: cannot open shared object file: No such file or directory
+*** Warning: failed to preload CUDA lib
+*** Warning: failed to preload PhysX libs
+Importing module 'gym_38' (/home/sviswasam/dr/isaacgym/python/isaacgym/_bindings/linux-x86_64/gym_38.so)
+Setting GYM_USD_PLUG_INFO_PATH to /home/sviswasam/dr/isaacgym/python/isaacgym/_bindings/linux-x86_64/usd/plugInfo.json
+PyTorch version 2.3.1+cu121
+Device count 0
+/home/sviswasam/dr/isaacgym/python/isaacgym/_bindings/src/gymtorch
+Using /home/sviswasam/.cache/torch_extensions/py38_cu121 as PyTorch extensions root...
+Creating extension directory /home/sviswasam/.cache/torch_extensions/py38_cu121/gymtorch...
+Emitting ninja build file /home/sviswasam/.cache/torch_extensions/py38_cu121/gymtorch/build.ninja...
+Building extension module gymtorch...
+Allowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)
+[1/2] g++ -MMD -MF gymtorch.o.d -DTORCH_EXTENSION_NAME=gymtorch -DTORCH_API_INCLUDE_EXTENSION_H -DPYBIND11_COMPILER_TYPE=\"_gcc\" -DPYBIND11_STDLIB=\"_libstdcpp\" -DPYBIND11_BUILD_ABI=\"_cxxabi1011\" -isystem /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include -isystem /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include/torch/csrc/api/include -isystem /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include/TH -isystem /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include/THC -isystem /usr/include/python3.8 -D_GLIBCXX_USE_CXX11_ABI=0 -fPIC -std=c++17 -DTORCH_MAJOR=2 -DTORCH_MINOR=3 -c /home/sviswasam/dr/isaacgym/python/isaacgym/_bindings/src/gymtorch/gymtorch.cpp -o gymtorch.o 
+FAILED: [code=1] gymtorch.o 
+g++ -MMD -MF gymtorch.o.d -DTORCH_EXTENSION_NAME=gymtorch -DTORCH_API_INCLUDE_EXTENSION_H -DPYBIND11_COMPILER_TYPE=\"_gcc\" -DPYBIND11_STDLIB=\"_libstdcpp\" -DPYBIND11_BUILD_ABI=\"_cxxabi1011\" -isystem /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include -isystem /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include/torch/csrc/api/include -isystem /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include/TH -isystem /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include/THC -isystem /usr/include/python3.8 -D_GLIBCXX_USE_CXX11_ABI=0 -fPIC -std=c++17 -DTORCH_MAJOR=2 -DTORCH_MINOR=3 -c /home/sviswasam/dr/isaacgym/python/isaacgym/_bindings/src/gymtorch/gymtorch.cpp -o gymtorch.o 
+In file included from /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include/torch/csrc/Device.h:4,
+                 from /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include/torch/csrc/api/include/torch/python.h:8,
+                 from /home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include/torch/extension.h:9,
+                 from /home/sviswasam/dr/isaacgym/python/isaacgym/_bindings/src/gymtorch/gymtorch.cpp:17:
+/home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/include/torch/csrc/python_headers.h:12:10: fatal error: Python.h: No such file or directory
+   12 | #include <Python.h>
+      |          ^~~~~~~~~~
+compilation terminated.
+ninja: build stopped: subcommand failed.
+[Warning] [carb] Potential plugin preload failed: /home/sviswasam/dr/isaacgym/python/isaacgym/_bindings/linux-x86_64/libcarb.gym.plugin.so
+Traceback (most recent call last):
+  File "/home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/utils/cpp_extension.py", line 2107, in _run_ninja_build
+    subprocess.run(
+  File "/usr/lib/python3.8/subprocess.py", line 516, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['ninja', '-v']' returned non-zero exit status 1.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<string>", line 2, in <module>
+  File "/home/sviswasam/dr/isaacgym/python/isaacgym/gymtorch.py", line 109, in <module>
+    _import_gymtorch()
+  File "/home/sviswasam/dr/isaacgym/python/isaacgym/gymtorch.py", line 45, in _import_gymtorch
+    gt = torch.utils.cpp_extension.load(name="gymtorch", sources=sources, extra_cflags=cflags, verbose=True)
+  File "/home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/utils/cpp_extension.py", line 1309, in load
+    return _jit_compile(
+  File "/home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/utils/cpp_extension.py", line 1719, in _jit_compile
+    _write_ninja_file_and_build_library(
+  File "/home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/utils/cpp_extension.py", line 1832, in _write_ninja_file_and_build_library
+    _run_ninja_build(
+  File "/home/sviswasam/dr/unitree_env/lib/python3.8/site-packages/torch/utils/cpp_extension.py", line 2123, in _run_ninja_build
+    raise RuntimeError(message) from e
+RuntimeError: Error building extension 'gymtorch'
