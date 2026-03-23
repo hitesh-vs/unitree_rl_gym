@@ -1,14 +1,15 @@
 """
 modular_policy/algos/ppo/runner.py
 
-Full PPO training loop.
-Uses G1Robot for physics, ObsBuilder for obs, ActorCritic + Buffer for policy.
-Drop-in replacement for OnPolicyRunner — same .learn() signature.
+PPO training loop — supports both single-variant and multi-variant training.
+Multi-variant: per-env base_height_target, per-variant DOF limits,
+               per-variant meter tracking.
 """
 
 import os
 import time
 import math
+import json
 import numpy as np
 from collections import deque
 from datetime import datetime
@@ -26,7 +27,7 @@ from modular_policy.utils.meter import TrainMeter
 from modular_policy.utils import optimizer as ou
 
 
-# ── Reward constants ──────────────────────────────────────────────────────────
+# ── Reward scales ─────────────────────────────────────────────────────────────
 _REWARD_SCALES = {
     "tracking_lin_vel":   1.0,
     "tracking_ang_vel":   0.5,
@@ -44,7 +45,6 @@ _REWARD_SCALES = {
     "feet_swing_height":-20.0,
     "contact":           0.18,
 }
-_BASE_HEIGHT  = 0.78
 _SIGMA        = 0.25
 _SOFT_LIMIT   = 0.9
 _STANCE_THRESH = 0.55
@@ -61,9 +61,19 @@ def _quat_rot_inv(q, v):
 
 
 class ModularRunner:
-    """Replaces OnPolicyRunner. Call .learn() to train."""
+    """
+    PPO runner. Supports single and multi-variant training.
 
-    def __init__(self, env, xml_path, log_dir=None, device="cuda:0"):
+    Single variant:
+        runner = ModularRunner(env, xml_path=..., ...)
+
+    Multi-variant:
+        runner = ModularRunner(env, xml_path=...,
+                               variants_metadata_path=..., ...)
+    """
+
+    def __init__(self, env, xml_path, log_dir=None, device="cuda:0",
+                 variants_metadata_path=None):
         print("[ModularRunner] Starting __init__...", flush=True)
         self.env     = env
         self.device  = torch.device(device)
@@ -71,15 +81,54 @@ class ModularRunner:
         self.writer  = None
 
         self.num_envs    = env.num_envs
-        self.num_actions = env.num_actions   # 12
+        self.num_actions = env.num_actions
         self.dt          = env.cfg.control.decimation * env.sim_params.dt
 
-        # Update cfg so model sizes are consistent
         cfg.PPO.NUM_ENVS = self.num_envs
+
+        # ── Multi-variant setup ───────────────────────────────────────────
+        self.multi_variant = (variants_metadata_path is not None)
+        if self.multi_variant:
+            with open(variants_metadata_path) as f:
+                meta = json.load(f)
+            self.variant_names = list(meta.keys())
+            self.variant_meta  = list(meta.values())
+            self.num_variants  = len(self.variant_names)
+            xml_paths          = [m["xml"] for m in self.variant_meta]
+
+            # Per-env base_height_target tensor (N,)
+            bht_per_variant = torch.tensor(
+                [m["base_height_target"] for m in self.variant_meta],
+                dtype=torch.float32, device=self.device)
+            self.base_height = bht_per_variant[env.env_variant_ids]  # (N,)
+            print(f"[ModularRunner] Multi-variant: {self.num_variants} variants")
+
+            # Per-env feet clearance target — scales with leg length
+            fct_per_variant = torch.tensor(
+                [m.get("feet_clearance_target", 0.08) for m in self.variant_meta],
+                dtype=torch.float32, device=self.device)
+            self.feet_clearance = fct_per_variant[env.env_variant_ids]  # (N,)
+
+            # env_variant_ids from the env
+            env_variant_ids = env.env_variant_ids
+        else:
+            self.variant_names = ["g1"]
+            self.num_variants  = 1
+            xml_paths          = None
+            env_variant_ids    = None
+            self.base_height   = torch.full(
+                (self.num_envs,), 0.78,
+                dtype=torch.float32, device=self.device)
+            self.feet_clearance = torch.full(
+                (self.num_envs,), 0.08,
+                dtype=torch.float32, device=self.device)
 
         # ── Obs builder ───────────────────────────────────────────────────
         print("[ModularRunner] Creating ObsBuilder...", flush=True)
-        self.obs_builder = ObsBuilder(env, xml_path, device)
+        self.obs_builder = ObsBuilder(
+            env, xml_path, device,
+            xml_paths=xml_paths,
+            env_variant_ids=env_variant_ids)
         print("[ModularRunner] ObsBuilder Done", flush=True)
 
         # ── Episode state ─────────────────────────────────────────────────
@@ -91,7 +140,7 @@ class ModularRunner:
         self.commands        = torch.zeros(self.num_envs, 3,                   device=self.device)
         self._resample_commands(torch.arange(self.num_envs, device=self.device))
 
-        # Soft DOF limits
+        # ── DOF limits (per-variant if multi-variant) ─────────────────────
         print("[ModularRunner] Building DOF limits...", flush=True)
         self._build_dof_limits()
 
@@ -101,18 +150,15 @@ class ModularRunner:
             self.obs_builder.observation_space,
             self.obs_builder.action_space,
         ).to(self.device)
-
         total_params = sum(p.numel() for p in self.actor_critic.parameters())
         print(f"[ModularRunner] Policy params: {total_params:,}")
-
         self.agent = Agent(self.actor_critic)
 
         # ── Buffer ────────────────────────────────────────────────────────
         print("[ModularRunner] Creating Buffer...", flush=True)
         self.buffer = Buffer(
             self.obs_builder.observation_space,
-            self.obs_builder.action_space.shape,
-        )
+            self.obs_builder.action_space.shape)
         print("[ModularRunner] Buffer to device...", flush=True)
         self.buffer.to(self.device)
 
@@ -124,12 +170,12 @@ class ModularRunner:
         self.lr_scale = [1.0]
 
         # ── Metrics ───────────────────────────────────────────────────────
-        self.train_meter  = TrainMeter(["g1"])
-        self.start_time   = time.time()
+        self.train_meter   = TrainMeter(self.variant_names)
+        self.start_time    = time.time()
         self.tot_timesteps = 0
 
-        # Online obs normalisation (Welford)
-        prop_dim = cfg.MODEL.MAX_LIMBS * self.obs_builder.limb_obs_size
+        # Obs normalisation
+        prop_dim      = cfg.MODEL.MAX_LIMBS * self.obs_builder.limb_obs_size
         self.ob_mean  = torch.zeros(prop_dim, device=self.device)
         self.ob_var   = torch.ones( prop_dim, device=self.device)
         self.ob_count = 1e-4
@@ -151,14 +197,13 @@ class ModularRunner:
                 self.env.episode_length_buf,
                 high=int(self.env.max_episode_length))
 
-        # Initial reset and obs
         print("[learn] Resetting envs...", flush=True)
         self.env.reset_idx(torch.arange(self.num_envs, device=self.device))
         print("[learn] Getting initial obs...", flush=True)
         obs = self._get_obs_normalized()
-
         print("[learn] Got obs, starting training loop...", flush=True)
-        cfg.PPO.MAX_ITERS = num_learning_iterations   # needed for LR schedule
+
+        cfg.PPO.MAX_ITERS = num_learning_iterations
 
         for cur_iter in range(num_learning_iterations):
             print(f"[learn] iter {cur_iter}", flush=True)
@@ -168,32 +213,17 @@ class ModularRunner:
 
             lr = ou.get_iter_lr(cur_iter)
             ou.set_lr(self.optimizer, lr, self.lr_scale)
+            t0 = time.time()
 
             # ── Rollout ───────────────────────────────────────────────────
-            import time
             for step in range(cfg.PPO.TIMESTEPS):
                 unimal_ids = [0] * self.num_envs
-                t0 = time.time()
 
                 val, act, logp, dmv, dmmu = self.agent.act(
                     obs, unimal_ids=unimal_ids)
-                t1 = time.time()
 
                 act_mask     = self.obs_builder.act_padding_mask[0].bool()
                 real_actions = act[:, ~act_mask].clamp(-1., 1.)
-
-                obs_next, rewards, dones, infos = self._step(real_actions)
-                t2 = time.time()
-
-                obs_next = self._normalize_obs(obs_next)
-                t3 = time.time()
-
-                if step < 3:
-                    print(f"  [step {step}] act={t1-t0:.3f}s  env_step={t2-t1:.3f}s  norm={t3-t2:.3f}s", flush=True)
-
-                # Strip action padding
-                act_mask     = self.obs_builder.act_padding_mask[0].bool()
-                real_actions = act[:, ~act_mask].clamp(-1., 1.)   # (N, 12)
 
                 obs_next, rewards, dones, infos = self._step(real_actions)
                 obs_next = self._normalize_obs(obs_next)
@@ -212,6 +242,7 @@ class ModularRunner:
                 obs = obs_next
 
             t_rollout = time.time()
+
             # ── Value bootstrap ───────────────────────────────────────────
             next_val = self.agent.get_value(obs, unimal_ids=[0]*self.num_envs)
             self.buffer.compute_returns(next_val)
@@ -221,7 +252,9 @@ class ModularRunner:
             self._ppo_update(cur_iter)
             t_update = time.time()
 
-            print(f"[iter {cur_iter}] rollout={t_rollout-t0:.1f}s  bootstrap={t_bootstrap-t_rollout:.1f}s  update={t_update-t_bootstrap:.1f}s", flush=True)
+            print(f"[iter {cur_iter}] rollout={t_rollout-t0:.1f}s  "
+                  f"bootstrap={t_bootstrap-t_rollout:.1f}s  "
+                  f"update={t_update-t_bootstrap:.1f}s", flush=True)
 
             self.train_meter.update_mean()
             self.tot_timesteps += cfg.PPO.TIMESTEPS * self.num_envs
@@ -240,9 +273,9 @@ class ModularRunner:
             path = os.path.join(self.log_dir, f"model_{cur_iter}.pt")
         if path:
             torch.save({
-                "model_state_dict": self.actor_critic.state_dict(),
+                "model_state_dict":     self.actor_critic.state_dict(),
                 "optimizer_state_dict": self.optimizer.state_dict(),
-                "iter": cur_iter,
+                "iter":    cur_iter,
                 "ob_mean": self.ob_mean.cpu(),
                 "ob_var":  self.ob_var.cpu(),
                 "ob_count": self.ob_count,
@@ -312,7 +345,7 @@ class ModularRunner:
         return self._normalize_obs(obs)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Rewards
+    # Rewards — per-env base_height_target
     # ─────────────────────────────────────────────────────────────────────
 
     def _compute_rewards(self, actions, phase_left, phase_right):
@@ -327,7 +360,7 @@ class ModularRunner:
         base_lin = _quat_rot_inv(q_wxyz, root[:, 7:10])
         base_ang = _quat_rot_inv(q_wxyz, root[:, 10:13])
 
-        grav_w   = torch.tensor([0., 0., -1.], device=self.device).expand(N, 3)
+        grav_w    = torch.tensor([0., 0., -1.], device=self.device).expand(N, 3)
         proj_grav = _quat_rot_inv(q_wxyz, grav_w)
 
         dof_pos  = self.env.dof_pos[:N]
@@ -348,7 +381,10 @@ class ModularRunner:
         r_lvz  = base_lin[:,2]**2
         r_avxy = (base_ang[:,:2]**2).sum(1)
         r_ori  = (proj_grav[:,:2]**2).sum(1)
-        r_bh   = (height - _BASE_HEIGHT)**2
+
+        # Per-env base height target
+        r_bh   = (height - self.base_height)**2
+
         r_dacc = ((dof_vel - self.last_dof_vel) / dt).pow(2).sum(1)
         r_dv   = dof_vel.pow(2).sum(1)
         r_ar   = (actions - self.last_actions).pow(2).sum(1)
@@ -364,8 +400,9 @@ class ModularRunner:
         rs = (phase_right < _STANCE_THRESH).float()
         r_con = (lc == ls).float() + (rc == rs).float()
 
-        r_cnv  = (lv.pow(2).sum(1)*lc + rv.pow(2).sum(1)*rc)
-        r_fsh  = ((lz-0.08).pow(2)*(1-lc) + (rz-0.08).pow(2)*(1-rc))
+        r_cnv = (lv.pow(2).sum(1)*lc + rv.pow(2).sum(1)*rc)
+        fc    = self.feet_clearance
+        r_fsh = ((lz - fc).pow(2)*(1-lc) + (rz - fc).pow(2)*(1-rc))
 
         total = (
             s["tracking_lin_vel"]  * r_tlv  * dt +
@@ -387,7 +424,7 @@ class ModularRunner:
         return total
 
     # ─────────────────────────────────────────────────────────────────────
-    # Termination
+    # Termination — per-variant height thresholds
     # ─────────────────────────────────────────────────────────────────────
 
     def _check_termination(self):
@@ -396,10 +433,17 @@ class ModularRunner:
         q      = _ig_quat_to_wxyz(root[:, 3:7])
         w, x, y, z = q[:,0], q[:,1], q[:,2], q[:,3]
         roll  = torch.atan2(2*(w*x+y*z), 1-2*(x*x+y*y))
-        pitch = torch.asin((2*(w*y-z*x)).clamp(-1,1))
+        pitch = torch.asin((2*(w*y-z*x)).clamp(-1, 1))
         pelvis_fz = self.env.contact_forces[:self.num_envs, 0, 2].abs()
-        return (pelvis_fz > 1.) | (height < .4) | (height > 1.15) | \
-               (pitch.abs() > 1.) | (roll.abs() > .8) | (self.episode_steps >= 1000)
+
+        # Height bounds scale with base_height_target
+        h_lo = self.base_height * 0.5
+        h_hi = self.base_height * 1.5
+
+        return (pelvis_fz > 1.) | \
+               (height < h_lo) | (height > h_hi) | \
+               (pitch.abs() > 1.) | (roll.abs() > .8) | \
+               (self.episode_steps >= 1000)
 
     # ─────────────────────────────────────────────────────────────────────
     # PPO update
@@ -435,9 +479,9 @@ class ModularRunner:
                 pi_loss = -torch.min(surr1, surr2).mean()
 
                 if cfg.PPO.USE_CLIP_VALUE_FUNC:
-                    vclip   = batch["val"] + (val - batch["val"]).clamp(
+                    vclip = batch["val"] + (val - batch["val"]).clamp(
                         -cfg.PPO.CLIP_EPS, cfg.PPO.CLIP_EPS)
-                    vl      = 0.5 * torch.max(
+                    vl    = 0.5 * torch.max(
                         (val - batch["ret"]).pow(2),
                         (vclip - batch["ret"]).pow(2)).mean()
                 else:
@@ -455,14 +499,31 @@ class ModularRunner:
     # ─────────────────────────────────────────────────────────────────────
 
     def _build_dof_limits(self):
-        dp = self.env.gym.get_actor_dof_properties(
-            self.env.envs[0], self.env.actor_handles[0])
-        lo = torch.tensor([float(dp["lower"][i]) for i in range(self.num_actions)],
-                          dtype=torch.float32, device=self.device)
-        hi = torch.tensor([float(dp["upper"][i]) for i in range(self.num_actions)],
-                          dtype=torch.float32, device=self.device)
-        m  = (lo + hi) * .5;  r = hi - lo
-        self.dof_lo = m - .5 * r * _SOFT_LIMIT
+        """
+        In multi-variant mode build per-env DOF limits from stacked
+        variant data in obs_builder. In single-variant mode use Isaac Gym.
+        """
+        if self.multi_variant:
+            # Use per-variant joint ranges from obs_builder
+            # joint_lo_stacked: (V, 12), index by env_variant_ids
+            vid = self.env.env_variant_ids
+            lo  = self.obs_builder.joint_lo_stacked[vid]    # (N, 12)
+            hi  = self.obs_builder.joint_hi_stacked[vid]
+        else:
+            dp = self.env.gym.get_actor_dof_properties(
+                self.env.envs[0], self.env.actor_handles[0])
+            lo = torch.tensor(
+                [float(dp["lower"][i]) for i in range(self.num_actions)],
+                dtype=torch.float32, device=self.device).unsqueeze(0).expand(
+                    self.num_envs, -1)
+            hi = torch.tensor(
+                [float(dp["upper"][i]) for i in range(self.num_actions)],
+                dtype=torch.float32, device=self.device).unsqueeze(0).expand(
+                    self.num_envs, -1)
+
+        m       = (lo + hi) * .5
+        r       = hi - lo
+        self.dof_lo = m - .5 * r * _SOFT_LIMIT   # (N, 12)
         self.dof_hi = m + .5 * r * _SOFT_LIMIT
 
     def _resample_commands(self, env_ids):
@@ -492,6 +553,9 @@ class ModularRunner:
         done_np = dones.cpu().numpy()
         for i in range(self.num_envs):
             info = {"name": "g1"}
+            if self.multi_variant:
+                vid  = int(self.env.env_variant_ids[i].item())
+                info["name"] = self.variant_names[vid]
             if done_np[i]:
                 info["episode"] = {
                     "r": float(self.episode_returns[i].item()),
@@ -502,13 +566,13 @@ class ModularRunner:
 
     def _log(self, cur_iter, total_iters):
         elapsed = time.time() - self.start_time
-        fps     = int(self.tot_timesteps / elapsed)
-        eta     = elapsed / (cur_iter + 1) * (total_iters - cur_iter)
+        fps     = int(self.tot_timesteps / max(elapsed, 1))
+        eta     = elapsed / max(cur_iter + 1, 1) * (total_iters - cur_iter)
         print(f"\nIter {cur_iter}/{total_iters} | "
               f"timesteps {self.tot_timesteps} | FPS {fps} | ETA {eta:.0f}s")
         self.train_meter.log_stats()
         if self.writer:
-            self.writer.add_scalar("Perf/fps",         fps, cur_iter)
-            self.writer.add_scalar("Perf/timesteps",   self.tot_timesteps, cur_iter)
+            self.writer.add_scalar("Perf/fps",       fps, cur_iter)
+            self.writer.add_scalar("Perf/timesteps", self.tot_timesteps, cur_iter)
             self.writer.add_scalar("Train/lr",
                 self.optimizer.param_groups[0]["lr"], cur_iter)

@@ -162,7 +162,7 @@ cython_debug/
 logs
 
 # Output
-output_walk_isaac/
+output_*
 
 # Any traj
 *.pkl

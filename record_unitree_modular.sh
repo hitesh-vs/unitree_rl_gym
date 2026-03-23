@@ -3,13 +3,13 @@
 #SBATCH --mail-type=ALL
 #SBATCH -p short
 #SBATCH -N 1
-#SBATCH -c 4
-#SBATCH --gres=gpu:L40S:1
-#SBATCH -t 23:59:00
-#SBATCH --mem 64G
-#SBATCH --job-name="test"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_custom3.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_custom3.err
+#SBATCH -c 2
+#SBATCH --gres=gpu:1
+#SBATCH -t 00:15:00
+#SBATCH --mem 16G
+#SBATCH --job-name="record"
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_video3.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_video3.err
 
 # 1. Load basic modules
 module load cuda12.1/toolkit/12.1.1
@@ -21,7 +21,6 @@ module load python/3.8.13/slu6jvw
 # 2. Set Compiler flags
 export CXX=g++
 export CC=gcc
-export MAX_JOBS=4
 
 # 3. CRITICAL: Explicit Python Headers (the slu6jvw path)
 export PYTHON_HEADERS=/cm/shared/spack/opt/spack/linux-ubuntu20.04-x86_64/gcc-12.1.0/python-3.8.13-slu6jvwlh43vemachntuxtqyqbxpltdg/include/python3.8
@@ -56,9 +55,21 @@ source /home/sviswasam/dr/unitree_env/bin/activate
 # This bypasses ninja's stale-check entirely
 export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 
-# 7. Execute
-python modular_policy/train_modular.py \
-    --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
+# 7. Execute (Single robot)
+# python deploy/deploy_mujoco/record_traj_modular.py \
+#     --checkpoint output_walk_isaac_success/Mar21_18-51-07/model_400.pt \
+#     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
+#     --output_file trajectory_g1.pkl \
+#     --duration 10.0 \
+#     --cmd_vx 0.5 \
+#     --graph_encoding topological \
+#     --device cpu
+
+# 7. Execute (Multi robot)
+python deploy/deploy_mujoco/record_traj_all_variants.py \
+    --checkpoint output_multi_robot/Mar23_00-15-38/model_300.pt \
     --variants_metadata resources/robots/g1_variants/variants_metadata.json \
-    --out_dir ./output_multi_robot2 \
-    --num_envs 512 --headless --graph_encoding topological
+    --out_dir trajectories/ \
+    --duration 10.0 \
+    --cmd_vx 0.5 \
+    --graph_encoding topological

@@ -1,0 +1,50 @@
+{
+  "g1_12dof": {
+    "episodes": 2,
+    "mean_return": 2.605,
+    "mean_ep_len": 5.0,
+    "max_ep_len": 8.6,
+    "max_return": 4.5,
+    "pkl": "trajectories/traj_g1_12dof.pkl"
+  },
+  "robot_variant_0": {
+    "episodes": 2,
+    "mean_return": 2.568,
+    "mean_ep_len": 5.0,
+    "max_ep_len": 7.38,
+    "max_return": 3.739,
+    "pkl": "trajectories/traj_robot_variant_0.pkl"
+  },
+  "robot_variant_1": {
+    "episodes": 3,
+    "mean_return": 1.611,
+    "mean_ep_len": 3.33,
+    "max_ep_len": 4.74,
+    "max_return": 2.318,
+    "pkl": "trajectories/traj_robot_variant_1.pkl"
+  },
+  "robot_variant_2": {
+    "episodes": 2,
+    "mean_return": 2.604,
+    "mean_ep_len": 5.0,
+    "max_ep_len": 6.82,
+    "max_return": 3.547,
+    "pkl": "trajectories/traj_robot_variant_2.pkl"
+  },
+  "robot_variant_3": {
+    "episodes": 1,
+    "mean_return": 5.336,
+    "mean_ep_len": 10.0,
+    "max_ep_len": 10.0,
+    "max_return": 5.336,
+    "pkl": "trajectories/traj_robot_variant_3.pkl"
+  },
+  "robot_variant_4": {
+    "episodes": 2,
+    "mean_return": 2.619,
+    "mean_ep_len": 5.0,
+    "max_ep_len": 6.6,
+    "max_return": 3.673,
+    "pkl": "trajectories/traj_robot_variant_4.pkl"
+  }
+}

@@ -104,8 +104,31 @@ class MujocoGraphParser:
             X[i, 4] = float(parent_map[name] is None)
             X[i, 5] = degree[name] / max_deg
         return X
+    
+    def features_rwse(self, k: int = 8) -> np.ndarray:
+        """
+        (N, k) Random Walk Structural Encoding.
+        Entry [i, t] = probability of a length-(t+1) random walk
+        starting at node i returning to node i.
+        Pure topology — zero name parsing, transferable across robots.
+        """
+        A     = self.build_adjacency()           # includes self-loops
+        deg   = A.sum(axis=1, keepdims=True)
+        A_rw  = A / (deg + 1e-8)                 # row-stochastic D^{-1}A
+        X     = np.zeros((self.N, k), dtype=np.float32)
+        A_pow = A_rw.copy()
+        for t in range(k):
+            X[:, t] = np.diag(A_pow)
+            A_pow   = A_pow @ A_rw
+        return X
 
+    # Replace get_features:
     def get_features(self, mode: str) -> np.ndarray:
-        if mode == "onehot":       return self.features_onehot()
-        elif mode == "topological": return self.features_topological()
-        else: raise ValueError(f"Unknown feature mode: {mode!r}")
+        if mode == "onehot":
+            return self.features_onehot()
+        elif mode == "topological":
+            return self.features_topological()
+        elif mode == "rwse":
+            return self.features_rwse(k=8)
+        else:
+            raise ValueError(f"Unknown feature mode: {mode!r}")
