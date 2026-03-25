@@ -67,9 +67,9 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 
 # 7. Execute (Multi robot)
 python deploy/deploy_mujoco/record_traj_all_variants.py \
-    --checkpoint output_multi_robot/Mar23_00-15-38/model_300.pt \
+    --checkpoint output_multi_robot2/Mar23_16-41-47/model_600.pt \
     --variants_metadata resources/robots/g1_variants/variants_metadata.json \
-    --out_dir trajectories/ \
+    --out_dir trajectories2/ \
     --duration 10.0 \
     --cmd_vx 0.5 \
     --graph_encoding topological

@@ -45,8 +45,8 @@ cfg.PPO = _Namespace(
     GAMMA            = 0.99,
     GAE_LAMBDA       = 0.95,
     CLIP_EPS         = 0.2,
-    EPOCHS           = 2,
-    BATCH_SIZE       = 16384,
+    EPOCHS           = 4,
+    BATCH_SIZE       = 4096,
     VALUE_COEF       = 0.2,
     KL_TARGET_COEF   = 20.0,
     USE_CLIP_VALUE_FUNC = True,
@@ -155,6 +155,9 @@ cfg.TASK_SAMPLING = _Namespace(
     PROB_ALPHA = 1.0,
     AVG_TYPE   = "ema",
 )
+
+# RWSE params
+cfg.MODEL.RWSE_K = 8
 
 # ── MISC ──────────────────────────────────────────────────────────────────────
 cfg.OUT_DIR        = "./output_walk_isaac"

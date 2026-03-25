@@ -46,7 +46,7 @@ def parse_args():
     p.add_argument("--seed",      type=int, default=1409)
     p.add_argument("--max_iters", type=int, default=3000)
     p.add_argument("--graph_encoding", type=str, default="topological",
-                   choices=["none", "onehot", "topological"])
+               choices=["none", "onehot", "topological", "rwse"])
     return p.parse_args()
 
 

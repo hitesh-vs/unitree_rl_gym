@@ -45,8 +45,8 @@ _REWARD_SCALES = {
     "feet_swing_height":-20.0,
     "contact":           0.18,
 }
-_SIGMA        = 0.25
-_SOFT_LIMIT   = 0.9
+_SIGMA         = 0.25
+_SOFT_LIMIT    = 0.9
 _STANCE_THRESH = 0.55
 
 
@@ -58,6 +58,47 @@ def _quat_rot_inv(q, v):
     w   = q[..., 0:1]; xyz = q[..., 1:]
     t   = 2.0 * torch.cross(xyz, v, dim=-1)
     return v - w * t + torch.cross(xyz, t, dim=-1)
+
+
+def _get_limb_labels(xml_path, robot_name, seq_len):
+    """Build semantic labels for each limb position in the padded sequence."""
+    import xml.etree.ElementTree as ET
+
+    tree      = ET.parse(xml_path)
+    root      = tree.getroot()
+    worldbody = root.find("worldbody")
+
+    nodes, parents = [], {}
+    def traverse(body, parent_name):
+        name = body.attrib.get("name", f"body_{len(nodes)}")
+        nodes.append(name)
+        parents[name] = parent_name
+        for child in body.findall("body"):
+            traverse(child, name)
+    for body in worldbody.findall("body"):
+        traverse(body, None)
+
+    labels = []
+    for bname in nodes:
+        n     = bname.lower()
+        side  = ("left"  if "left"  in n else
+                 "right" if "right" in n else "center")
+        jtype = ("hip_pitch" if "hip_pitch" in n else
+                 "hip_roll"  if "hip_roll"  in n else
+                 "hip_yaw"   if "hip_yaw"   in n else
+                 "knee"      if "knee"      in n else
+                 "ankle"     if "ankle"     in n else
+                 "root"      if ("pelvis" in n or "torso" in n) else
+                 "other")
+        labels.append({
+            "robot":    robot_name,
+            "body":     bname,
+            "semantic": f"{side}_{jtype}",
+        })
+
+    n_pad = seq_len - len(labels)
+    labels.extend([{"robot": "pad", "body": "pad", "semantic": "pad"}] * n_pad)
+    return labels
 
 
 class ModularRunner:
@@ -75,10 +116,11 @@ class ModularRunner:
     def __init__(self, env, xml_path, log_dir=None, device="cuda:0",
                  variants_metadata_path=None):
         print("[ModularRunner] Starting __init__...", flush=True)
-        self.env     = env
-        self.device  = torch.device(device)
-        self.log_dir = log_dir
-        self.writer  = None
+        self.env      = env
+        self.xml_path = xml_path   # base stripped XML — stored for t-SNE
+        self.device   = torch.device(device)
+        self.log_dir  = log_dir
+        self.writer   = None
 
         self.num_envs    = env.num_envs
         self.num_actions = env.num_actions
@@ -94,29 +136,33 @@ class ModularRunner:
             self.variant_names = list(meta.keys())
             self.variant_meta  = list(meta.values())
             self.num_variants  = len(self.variant_names)
-            xml_paths          = [m["xml"] for m in self.variant_meta]
 
-            # Per-env base_height_target tensor (N,)
+            # xml  = stripped MuJoCo XML — graph topology (same for all variants)
+            # urdf = variant URDF — actual kinematics/mass (different per variant)
+            xml_paths  = [m["xml"]  for m in self.variant_meta]
+            urdf_paths = [m["urdf"] for m in self.variant_meta]
+
+            # Per-env base_height_target (N,)
             bht_per_variant = torch.tensor(
                 [m["base_height_target"] for m in self.variant_meta],
                 dtype=torch.float32, device=self.device)
-            self.base_height = bht_per_variant[env.env_variant_ids]  # (N,)
-            print(f"[ModularRunner] Multi-variant: {self.num_variants} variants")
+            self.base_height = bht_per_variant[env.env_variant_ids]
 
-            # Per-env feet clearance target — scales with leg length
+            # Per-env feet clearance target
             fct_per_variant = torch.tensor(
                 [m.get("feet_clearance_target", 0.08) for m in self.variant_meta],
                 dtype=torch.float32, device=self.device)
-            self.feet_clearance = fct_per_variant[env.env_variant_ids]  # (N,)
+            self.feet_clearance = fct_per_variant[env.env_variant_ids]
 
-            # env_variant_ids from the env
+            print(f"[ModularRunner] Multi-variant: {self.num_variants} variants")
             env_variant_ids = env.env_variant_ids
         else:
-            self.variant_names = ["g1"]
-            self.num_variants  = 1
-            xml_paths          = None
-            env_variant_ids    = None
-            self.base_height   = torch.full(
+            self.variant_names  = ["g1"]
+            self.num_variants   = 1
+            xml_paths           = None
+            urdf_paths          = None
+            env_variant_ids     = None
+            self.base_height    = torch.full(
                 (self.num_envs,), 0.78,
                 dtype=torch.float32, device=self.device)
             self.feet_clearance = torch.full(
@@ -127,8 +173,9 @@ class ModularRunner:
         print("[ModularRunner] Creating ObsBuilder...", flush=True)
         self.obs_builder = ObsBuilder(
             env, xml_path, device,
-            xml_paths=xml_paths,
-            env_variant_ids=env_variant_ids)
+            xml_paths       = xml_paths,
+            urdf_paths      = urdf_paths,
+            env_variant_ids = env_variant_ids)
         print("[ModularRunner] ObsBuilder Done", flush=True)
 
         # ── Episode state ─────────────────────────────────────────────────
@@ -140,7 +187,7 @@ class ModularRunner:
         self.commands        = torch.zeros(self.num_envs, 3,                   device=self.device)
         self._resample_commands(torch.arange(self.num_envs, device=self.device))
 
-        # ── DOF limits (per-variant if multi-variant) ─────────────────────
+        # ── DOF limits ───────────────────────────────────────────────────
         print("[ModularRunner] Building DOF limits...", flush=True)
         self._build_dof_limits()
 
@@ -173,12 +220,13 @@ class ModularRunner:
         self.train_meter   = TrainMeter(self.variant_names)
         self.start_time    = time.time()
         self.tot_timesteps = 0
+        self.resume_iter   = 0
 
-        # Obs normalisation
+        # Obs normalisation (Welford)
         prop_dim      = cfg.MODEL.MAX_LIMBS * self.obs_builder.limb_obs_size
-        self.ob_mean  = torch.zeros(prop_dim, device=self.device)
-        self.ob_var   = torch.ones( prop_dim, device=self.device)
-        self.ob_count = 1e-4
+        self.ob_mean  = torch.zeros(self.num_variants, prop_dim, device=self.device)
+        self.ob_var   = torch.ones(self.num_variants, prop_dim, device=self.device)
+        self.ob_count = torch.full((self.num_variants,), 1e-4, device=self.device)
         self.clipob   = 10.0
 
         print("[ModularRunner] Init complete.", flush=True)
@@ -204,8 +252,9 @@ class ModularRunner:
         print("[learn] Got obs, starting training loop...", flush=True)
 
         cfg.PPO.MAX_ITERS = num_learning_iterations
+        start = self.resume_iter
 
-        for cur_iter in range(num_learning_iterations):
+        for cur_iter in range(start, start + num_learning_iterations):
             print(f"[learn] iter {cur_iter}", flush=True)
 
             if cfg.PPO.EARLY_EXIT and cur_iter >= cfg.PPO.EARLY_EXIT_MAX_ITERS:
@@ -260,12 +309,26 @@ class ModularRunner:
             self.tot_timesteps += cfg.PPO.TIMESTEPS * self.num_envs
 
             if cur_iter % cfg.LOG_PERIOD == 0 and cfg.LOG_PERIOD > 0:
-                self._log(cur_iter, num_learning_iterations)
+                self._log(cur_iter, start + num_learning_iterations)
 
             if cur_iter % cfg.CHECKPOINT_PERIOD == 0:
                 self.save(cur_iter)
 
-        self.save(num_learning_iterations)
+            # Collect t-SNE embeddings every 10 iters
+            TSNE_PERIOD = 10
+            if cur_iter % TSNE_PERIOD == 0:
+                xml_paths_for_tsne = (
+                    [m["xml"] for m in self.variant_meta]
+                    if self.multi_variant
+                    else [self.xml_path]
+                )
+                self.collect_tsne_embeddings(
+                    cur_iter,
+                    xml_paths     = xml_paths_for_tsne,
+                    variant_names = self.variant_names,
+                )
+
+        self.save(start + num_learning_iterations)
         print("Training complete.")
 
     def save(self, cur_iter, path=None):
@@ -275,10 +338,13 @@ class ModularRunner:
             torch.save({
                 "model_state_dict":     self.actor_critic.state_dict(),
                 "optimizer_state_dict": self.optimizer.state_dict(),
-                "iter":    cur_iter,
-                "ob_mean": self.ob_mean.cpu(),
-                "ob_var":  self.ob_var.cpu(),
-                "ob_count": self.ob_count,
+                "iter":       cur_iter,
+                "ob_mean":    self.ob_mean.cpu(),
+                "ob_var":     self.ob_var.cpu(),
+                "ob_count":   self.ob_count.cpu() if torch.is_tensor(self.ob_count)
+                            else self.ob_count,
+                "multi_variant": self.multi_variant,
+                "num_variants":  self.num_variants,
             }, path)
             print(f"[ModularRunner] Saved: {path}")
 
@@ -286,11 +352,106 @@ class ModularRunner:
         ckpt = torch.load(path, map_location=self.device)
         self.actor_critic.load_state_dict(ckpt["model_state_dict"])
         self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+
         if "ob_mean" in ckpt:
-            self.ob_mean  = ckpt["ob_mean"].to(self.device)
-            self.ob_var   = ckpt["ob_var"].to(self.device)
-            self.ob_count = ckpt["ob_count"]
-        print(f"[ModularRunner] Loaded: {path}")
+            saved_mean  = ckpt["ob_mean"]
+            saved_var   = ckpt["ob_var"]
+            saved_count = ckpt["ob_count"]
+            saved_multi = ckpt.get("multi_variant", False)
+
+            if saved_multi == self.multi_variant:
+                # Same mode — load directly
+                self.ob_mean  = saved_mean.to(self.device)
+                self.ob_var   = saved_var.to(self.device)
+                self.ob_count = (saved_count.to(self.device)
+                                if torch.is_tensor(saved_count)
+                                else saved_count)
+            elif not saved_multi and self.multi_variant:
+                # Resuming from single-variant checkpoint into multi-variant
+                # Broadcast single (338,) stats to all variants (V, 338)
+                print(f"[ModularRunner] Converting single-variant obs stats "
+                    f"to {self.num_variants}-variant stats", flush=True)
+                self.ob_mean  = saved_mean.to(self.device).unsqueeze(0).expand(
+                    self.num_variants, -1).clone()
+                self.ob_var   = saved_var.to(self.device).unsqueeze(0).expand(
+                    self.num_variants, -1).clone()
+                # Each variant starts with the full single-variant count
+                # so it doesn't get swamped by early multi-variant updates
+                self.ob_count = torch.full(
+                    (self.num_variants,),
+                    float(saved_count) if not torch.is_tensor(saved_count)
+                    else float(saved_count.mean()),
+                    device=self.device)
+            elif saved_multi and not self.multi_variant:
+                # Resuming from multi-variant into single-variant — take variant 0
+                print(f"[ModularRunner] Taking variant 0 obs stats "
+                    f"for single-variant run", flush=True)
+                self.ob_mean  = saved_mean[0].to(self.device)
+                self.ob_var   = saved_var[0].to(self.device)
+                self.ob_count = (float(saved_count[0])
+                                if torch.is_tensor(saved_count)
+                                else saved_count)
+
+        self.resume_iter = ckpt.get("iter", 0)
+        print(f"[ModularRunner] Loaded: {path}  (iter={self.resume_iter})")
+
+    def collect_tsne_embeddings(self, cur_iter, xml_paths, variant_names):
+        """Collect obs_embed activations from mu_net for t-SNE analysis."""
+        import pickle
+
+        print(f"[t-SNE] Collecting embeddings at iter {cur_iter}...", flush=True)
+
+        mu_net = self.actor_critic.mu_net
+        mu_net._tsne_buffer = {"embeds": [], "active": True}
+        self.actor_critic.eval()
+
+        obs = self._get_obs_normalized()
+        COLLECT_STEPS = 20
+        with torch.no_grad():
+            for _ in range(COLLECT_STEPS):
+                _, act, _, _, _ = self.agent.act(obs, unimal_ids=[0]*self.num_envs)
+                act_mask     = self.obs_builder.act_padding_mask[0].bool()
+                real_actions = act[:, ~act_mask].clamp(-1., 1.)
+                obs, _, _, _ = self._step(real_actions)
+                obs = self._normalize_obs(obs)
+
+        mu_net._tsne_buffer["active"] = False
+        self.actor_critic.train()
+
+        raw      = mu_net._tsne_buffer["embeds"]
+        combined = torch.cat(raw, dim=1)
+        seq_len, N_total, d = combined.shape
+        flat_embeds = combined.permute(1, 0, 2).reshape(-1, d).numpy()
+
+        flat_labels = []
+        n_steps = N_total // self.num_envs
+        for _ in range(n_steps):
+            for env_i in range(self.num_envs):
+                if self.multi_variant:
+                    vid   = int(self.env.env_variant_ids[env_i].item())
+                    rname = variant_names[vid]
+                    xp    = xml_paths[vid]
+                else:
+                    rname = "g1"
+                    xp    = xml_paths[0]
+                flat_labels.extend(_get_limb_labels(xp, rname, seq_len))
+
+        min_len     = min(len(flat_embeds), len(flat_labels))
+        flat_embeds = flat_embeds[:min_len]
+        flat_labels = flat_labels[:min_len]
+
+        keep        = [i for i, l in enumerate(flat_labels) if l["semantic"] != "pad"]
+        flat_embeds = flat_embeds[keep]
+        flat_labels = [flat_labels[i] for i in keep]
+
+        out_dir = self.log_dir or "./output_tsne"
+        os.makedirs(out_dir, exist_ok=True)
+        prefix  = os.path.join(out_dir, f"tsne_iter{cur_iter:04d}")
+        np.save(f"{prefix}_embeds.npy", flat_embeds)
+        with open(f"{prefix}_labels.pkl", "wb") as f:
+            pickle.dump(flat_labels, f)
+        print(f"[t-SNE] Saved {len(flat_embeds)} embeddings → {prefix}_embeds.npy",
+              flush=True)
 
     # ─────────────────────────────────────────────────────────────────────
     # Environment stepping
@@ -345,7 +506,7 @@ class ModularRunner:
         return self._normalize_obs(obs)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Rewards — per-env base_height_target
+    # Rewards
     # ─────────────────────────────────────────────────────────────────────
 
     def _compute_rewards(self, actions, phase_left, phase_right):
@@ -353,7 +514,7 @@ class ModularRunner:
         s  = _REWARD_SCALES
         N  = self.num_envs
 
-        root  = self.env.root_states[:N]
+        root   = self.env.root_states[:N]
         q_wxyz = _ig_quat_to_wxyz(root[:, 3:7])
         height = root[:, 2]
 
@@ -363,11 +524,11 @@ class ModularRunner:
         grav_w    = torch.tensor([0., 0., -1.], device=self.device).expand(N, 3)
         proj_grav = _quat_rot_inv(q_wxyz, grav_w)
 
-        dof_pos  = self.env.dof_pos[:N]
-        dof_vel  = self.env.dof_vel[:N]
-        rb       = self.env.rigid_body_states_view[:N]
+        dof_pos = self.env.dof_pos[:N]
+        dof_vel = self.env.dof_vel[:N]
+        rb      = self.env.rigid_body_states_view[:N]
 
-        fi = self.obs_builder.feet_indices
+        fi       = self.obs_builder.feet_indices
         left_fz  = self.env.contact_forces[:N, fi[0], 2].abs()
         right_fz = self.env.contact_forces[:N, fi[1], 2].abs()
         lc = (left_fz  > 1.).float()
@@ -381,10 +542,7 @@ class ModularRunner:
         r_lvz  = base_lin[:,2]**2
         r_avxy = (base_ang[:,:2]**2).sum(1)
         r_ori  = (proj_grav[:,:2]**2).sum(1)
-
-        # Per-env base height target
         r_bh   = (height - self.base_height)**2
-
         r_dacc = ((dof_vel - self.last_dof_vel) / dt).pow(2).sum(1)
         r_dv   = dof_vel.pow(2).sum(1)
         r_ar   = (actions - self.last_actions).pow(2).sum(1)
@@ -396,15 +554,14 @@ class ModularRunner:
         r_alive = torch.ones(N, device=self.device)
         r_hip   = dof_pos[:, [0,1,6,7]].pow(2).sum(1)
 
-        ls = (phase_left  < _STANCE_THRESH).float()
-        rs = (phase_right < _STANCE_THRESH).float()
+        ls    = (phase_left  < _STANCE_THRESH).float()
+        rs    = (phase_right < _STANCE_THRESH).float()
         r_con = (lc == ls).float() + (rc == rs).float()
-
         r_cnv = (lv.pow(2).sum(1)*lc + rv.pow(2).sum(1)*rc)
         fc    = self.feet_clearance
         r_fsh = ((lz - fc).pow(2)*(1-lc) + (rz - fc).pow(2)*(1-rc))
 
-        total = (
+        return (
             s["tracking_lin_vel"]  * r_tlv  * dt +
             s["tracking_ang_vel"]  * r_tav  * dt +
             s["lin_vel_z"]         * r_lvz  * dt +
@@ -421,10 +578,9 @@ class ModularRunner:
             s["contact_no_vel"]    * r_cnv  * dt +
             s["feet_swing_height"] * r_fsh  * dt
         )
-        return total
 
     # ─────────────────────────────────────────────────────────────────────
-    # Termination — per-variant height thresholds
+    # Termination
     # ─────────────────────────────────────────────────────────────────────
 
     def _check_termination(self):
@@ -435,15 +591,14 @@ class ModularRunner:
         roll  = torch.atan2(2*(w*x+y*z), 1-2*(x*x+y*y))
         pitch = torch.asin((2*(w*y-z*x)).clamp(-1, 1))
         pelvis_fz = self.env.contact_forces[:self.num_envs, 0, 2].abs()
-
-        # Height bounds scale with base_height_target
         h_lo = self.base_height * 0.5
         h_hi = self.base_height * 1.5
-
-        return (pelvis_fz > 1.) | \
-               (height < h_lo) | (height > h_hi) | \
-               (pitch.abs() > 1.) | (roll.abs() > .8) | \
-               (self.episode_steps >= 1000)
+        return (
+            (pelvis_fz > 1.) |
+            (height < h_lo) | (height > h_hi) |
+            (pitch.abs() > 1.) | (roll.abs() > .8) |
+            (self.episode_steps >= 1000)
+        )
 
     # ─────────────────────────────────────────────────────────────────────
     # PPO update
@@ -472,8 +627,8 @@ class ModularRunner:
                           f"kl={approx_kl:.4f}")
                     return
 
-                surr1 = ratio * batch["adv"]
-                surr2 = torch.clamp(
+                surr1   = ratio * batch["adv"]
+                surr2   = torch.clamp(
                     ratio, 1. - cfg.PPO.CLIP_EPS,
                            1. + cfg.PPO.CLIP_EPS) * batch["adv"]
                 pi_loss = -torch.min(surr1, surr2).mean()
@@ -499,15 +654,9 @@ class ModularRunner:
     # ─────────────────────────────────────────────────────────────────────
 
     def _build_dof_limits(self):
-        """
-        In multi-variant mode build per-env DOF limits from stacked
-        variant data in obs_builder. In single-variant mode use Isaac Gym.
-        """
         if self.multi_variant:
-            # Use per-variant joint ranges from obs_builder
-            # joint_lo_stacked: (V, 12), index by env_variant_ids
             vid = self.env.env_variant_ids
-            lo  = self.obs_builder.joint_lo_stacked[vid]    # (N, 12)
+            lo  = self.obs_builder.joint_lo_stacked[vid]
             hi  = self.obs_builder.joint_hi_stacked[vid]
         else:
             dp = self.env.gym.get_actor_dof_properties(
@@ -520,32 +669,51 @@ class ModularRunner:
                 [float(dp["upper"][i]) for i in range(self.num_actions)],
                 dtype=torch.float32, device=self.device).unsqueeze(0).expand(
                     self.num_envs, -1)
-
-        m       = (lo + hi) * .5
-        r       = hi - lo
-        self.dof_lo = m - .5 * r * _SOFT_LIMIT   # (N, 12)
+        m           = (lo + hi) * .5
+        r           = hi - lo
+        self.dof_lo = m - .5 * r * _SOFT_LIMIT
         self.dof_hi = m + .5 * r * _SOFT_LIMIT
 
     def _resample_commands(self, env_ids):
         n = len(env_ids)
-        self.commands[env_ids, 0] = torch.FloatTensor(n).uniform_(0., 1.).to(self.device)
+        self.commands[env_ids, 0] = torch.FloatTensor(n).uniform_(0.,  1.).to(self.device)
         self.commands[env_ids, 1] = torch.FloatTensor(n).uniform_(-.5, .5).to(self.device)
         self.commands[env_ids, 2] = torch.FloatTensor(n).uniform_(-.5, .5).to(self.device)
         small = self.commands[env_ids, :2].norm(dim=1) < .2
         self.commands[env_ids[small], :2] = 0.
 
     def _normalize_obs(self, obs):
-        prop = obs["proprioceptive"]
-        bm   = prop.mean(0); bv = prop.var(0); bc = prop.shape[0]
-        d    = bm - self.ob_mean
-        tot  = self.ob_count + bc
-        self.ob_mean  = self.ob_mean + d * bc / tot
-        self.ob_var   = (self.ob_var * self.ob_count + bv * bc +
-                         d.pow(2) * self.ob_count * bc / tot) / tot
-        self.ob_count = tot
-        obs["proprioceptive"] = (
-            (prop - self.ob_mean) / (self.ob_var + 1e-8).sqrt()
-        ).clamp(-self.clipob, self.clipob)
+        prop = obs["proprioceptive"]   # (N, 338)
+
+        if self.multi_variant:
+            vid = self.env.env_variant_ids   # (N,)
+            for v in range(self.num_variants):
+                mask = (vid == v)
+                if mask.sum() == 0:
+                    continue
+                p   = prop[mask]
+                bm  = p.mean(0); bv = p.var(0); bc = p.shape[0]
+                d   = bm - self.ob_mean[v]
+                tot = self.ob_count[v] + bc
+                self.ob_mean[v]  = self.ob_mean[v] + d * bc / tot
+                self.ob_var[v]   = (self.ob_var[v] * self.ob_count[v] + bv * bc +
+                                    d.pow(2) * self.ob_count[v] * bc / tot) / tot
+                self.ob_count[v] = tot
+                prop[mask] = (
+                    (p - self.ob_mean[v]) / (self.ob_var[v] + 1e-8).sqrt()
+                ).clamp(-self.clipob, self.clipob)
+        else:
+            bm  = prop.mean(0); bv = prop.var(0); bc = prop.shape[0]
+            d   = bm - self.ob_mean
+            tot = self.ob_count + bc
+            self.ob_mean  = self.ob_mean + d * bc / tot
+            self.ob_var   = (self.ob_var * self.ob_count + bv * bc +
+                            d.pow(2) * self.ob_count * bc / tot) / tot
+            self.ob_count = tot
+            prop = ((prop - self.ob_mean) /
+                    (self.ob_var + 1e-8).sqrt()).clamp(-self.clipob, self.clipob)
+
+        obs["proprioceptive"] = prop
         return obs
 
     def _build_infos(self, dones):
@@ -576,3 +744,17 @@ class ModularRunner:
             self.writer.add_scalar("Perf/timesteps", self.tot_timesteps, cur_iter)
             self.writer.add_scalar("Train/lr",
                 self.optimizer.param_groups[0]["lr"], cur_iter)
+
+            all_returns = []
+            for name, meter in self.train_meter.agent_meters.items():
+                if len(meter.ep_rew["reward"]) > 0:
+                    mean_ret = float(np.mean(meter.ep_rew["reward"]))
+                    self.writer.add_scalar(f"Reward/variant_{name}", mean_ret, cur_iter)
+                    all_returns.extend(list(meter.ep_rew["reward"]))
+            if all_returns:
+                self.writer.add_scalar("Reward/mean_all_variants",
+                                       float(np.mean(all_returns)), cur_iter)
+            for name, meter in self.train_meter.agent_meters.items():
+                if len(meter.ep_len) > 0:
+                    self.writer.add_scalar(f"EpLen/variant_{name}",
+                                           float(np.mean(meter.ep_len)), cur_iter)

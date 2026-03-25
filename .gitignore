@@ -168,3 +168,5 @@ output_*
 *.pkl
 *.npy
 
+# Mesh files
+*.STL

@@ -44,7 +44,11 @@ def build_gcn_from_cfg(cfg):
     mode = cfg.MODEL.GRAPH_ENCODING
     if mode == "none":
         return None
-    feat_dim = {"onehot": 7, "topological": 6}[mode]
+    feat_dim = {
+        "onehot":      7,
+        "topological": 6,
+        "rwse":        cfg.MODEL.RWSE_K,
+    }[mode]
     return MorphologyGCN(
         node_feat_dim=feat_dim,
         hidden_dim=cfg.MODEL.GCN.HIDDEN_DIM,

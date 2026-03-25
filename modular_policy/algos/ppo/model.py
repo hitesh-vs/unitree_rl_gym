@@ -130,6 +130,8 @@ class TransformerModel(nn.Module):
         self.gcn      = None
         self.gcn_proj = None
         self.dropout  = nn.Dropout(p=0.1)
+        # t-SNE embedding buffer — activated by runner during collection
+        self._tsne_buffer = {"embeds": [], "active": False}
         self.init_weights()
 
     def init_weights(self):
@@ -202,6 +204,10 @@ class TransformerModel(nn.Module):
                 gcn_emb   = self.gcn(X.float(), A_norm.float())
                 gcn_emb   = gcn_emb.permute(1, 0, 2)
                 obs_embed = obs_embed + self.gcn_proj(gcn_emb)
+        
+        # Capture embeddings for t-SNE if active
+        if self._tsne_buffer["active"]:
+            self._tsne_buffer["embeds"].append(obs_embed.detach().cpu())
 
         if self.model_args.POS_EMBEDDING in ["learnt", "abs"]:
             obs_embed = self.pos_embedding(obs_embed)

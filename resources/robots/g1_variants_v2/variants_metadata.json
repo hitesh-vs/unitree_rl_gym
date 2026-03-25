@@ -1,0 +1,50 @@
+{
+  "g1_12dof": {
+    "urdf": "resources/robots/g1_variants_v2/g1_12dof.urdf",
+    "xml": "/home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml",
+    "leg_z": 0.597608,
+    "leg_scale": 1.0,
+    "base_height_target": 0.78,
+    "feet_clearance_target": 0.08
+  },
+  "robot_variant_0": {
+    "urdf": "resources/robots/g1_variants_v2/robot_variant_0.urdf",
+    "xml": "/home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml",
+    "leg_z": 0.658072,
+    "leg_scale": 1.101177,
+    "base_height_target": 0.8589,
+    "feet_clearance_target": 0.0881
+  },
+  "robot_variant_1": {
+    "urdf": "resources/robots/g1_variants_v2/robot_variant_1.urdf",
+    "xml": "/home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml",
+    "leg_z": 0.681652,
+    "leg_scale": 1.140634,
+    "base_height_target": 0.8897,
+    "feet_clearance_target": 0.0913
+  },
+  "robot_variant_2": {
+    "urdf": "resources/robots/g1_variants_v2/robot_variant_2.urdf",
+    "xml": "/home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml",
+    "leg_z": 0.509574,
+    "leg_scale": 0.852689,
+    "base_height_target": 0.6651,
+    "feet_clearance_target": 0.0682
+  },
+  "robot_variant_3": {
+    "urdf": "resources/robots/g1_variants_v2/robot_variant_3.urdf",
+    "xml": "/home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml",
+    "leg_z": 0.541304,
+    "leg_scale": 0.905785,
+    "base_height_target": 0.7065,
+    "feet_clearance_target": 0.0725
+  },
+  "robot_variant_4": {
+    "urdf": "resources/robots/g1_variants_v2/robot_variant_4.urdf",
+    "xml": "/home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml",
+    "leg_z": 0.537544,
+    "leg_scale": 0.899492,
+    "base_height_target": 0.7016,
+    "feet_clearance_target": 0.072
+  }
+}
