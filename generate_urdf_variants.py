@@ -17,11 +17,23 @@ Limb groups:
   torso:     pelvis, torso_link (and all fixed children)
 
 Usage:
+    # Vary ALL properties (original behaviour)
     python generate_urdf_variants.py \
         --base_urdf resources/robots/g1_description/g1_12dof.urdf \
         --out_dir   resources/robots/g1_variants_v2 \
         --num_variants 10 \
         --seed 2025
+
+    # Vary ONLY one property, everything else is identity
+    python generate_urdf_variants.py \
+        --base_urdf resources/robots/g1_description/g1_12dof.urdf \
+        --out_dir   resources/robots/g1_variants_mass \
+        --num_variants 10 \
+        --seed 2025 \
+        --vary_prop mass
+
+    # Valid values for --vary_prop:
+    #   mass | length | joint_range | effort | damping | armature | all (default)
 """
 
 import os
@@ -56,6 +68,9 @@ LEG_LENGTH_JOINTS = {
 # Actuated joints (revolute) — gear/damping/range vary for these only
 ACTUATED_JOINTS = LEG_LENGTH_JOINTS  # same set for G1 12-DOF
 
+# All recognised property names (excluding the "all" alias)
+ALL_PROPS = {"mass", "length", "joint_range", "effort", "damping", "armature"}
+
 # ── Randomisation ranges ──────────────────────────────────────────────────────
 
 RANGES = {
@@ -74,7 +89,15 @@ BASE_ARMATURE = 0.01   # encoded as ixx=iyy=izz += armature * base_inertia_norm
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def sample(rng, key):
+def sample(rng, key, active_props):
+    """
+    Return a random scale for `key` if it is in active_props,
+    otherwise return the identity value (1.0) so nothing changes.
+    """
+    if key not in active_props:
+        lo, hi = RANGES[key]
+        # Identity: midpoint of range would still perturb things, so use 1.0
+        return 1.0
     lo, hi = RANGES[key]
     return float(rng.uniform(lo, hi))
 
@@ -100,18 +123,20 @@ def get_link_group(link_name):
 
 # ── Variant generator ─────────────────────────────────────────────────────────
 
-def generate_variant(base_root, rng, variant_idx):
+def generate_variant(base_root, rng, variant_idx, active_props):
     """
     Generate one URDF variant. Returns (root_elem, changes_dict).
     base_root is NOT modified — we deepcopy it first.
+
+    Only properties listed in `active_props` are randomised; all others
+    are held at their identity values (scale = 1.0, damping = BASE_DAMPING,
+    armature = BASE_ARMATURE).
     """
     root = copy.deepcopy(base_root)
 
     # ── Sample group-level scales ─────────────────────────────────────────
-    group_mass   = {g: sample(rng, "mass")   for g in ["left_leg", "right_leg", "torso"]}
-    group_length = {g: sample(rng, "length") for g in ["left_leg", "right_leg"]}
-    # torso length not varied — pelvis is the root, changing its z offset
-    # would shift the whole robot spawn height unpredictably
+    group_mass   = {g: sample(rng, "mass",   active_props) for g in ["left_leg", "right_leg", "torso"]}
+    group_length = {g: sample(rng, "length", active_props) for g in ["left_leg", "right_leg"]}
 
     # ── Sample per-joint scales ───────────────────────────────────────────
     joint_range_scales  = {}
@@ -123,10 +148,13 @@ def generate_variant(base_root, rng, variant_idx):
         jname = joint.attrib.get("name", "")
         if jname not in ACTUATED_JOINTS:
             continue
-        joint_range_scales[jname]  = sample(rng, "joint_range")
-        joint_effort_scales[jname] = sample(rng, "effort")
-        joint_damping_vals[jname]  = BASE_DAMPING * sample(rng, "damping")
-        joint_armature_vals[jname] = BASE_ARMATURE * sample(rng, "armature")
+        joint_range_scales[jname]  = sample(rng, "joint_range", active_props)
+        joint_effort_scales[jname] = sample(rng, "effort",      active_props)
+        # For damping/armature the "identity" is the base value, not 1.0
+        damp_scale = sample(rng, "damping",   active_props)
+        arm_scale  = sample(rng, "armature",  active_props)
+        joint_damping_vals[jname]  = BASE_DAMPING  * damp_scale
+        joint_armature_vals[jname] = BASE_ARMATURE * arm_scale
 
     # ── Apply mass scaling ────────────────────────────────────────────────
     for link in root.iter("link"):
@@ -155,7 +183,6 @@ def generate_variant(base_root, rng, variant_idx):
         if jname not in LEG_LENGTH_JOINTS:
             continue
 
-        # Determine which group this joint belongs to
         grp = ("left_leg"  if jname.startswith("left")  else
                "right_leg" if jname.startswith("right") else None)
         if grp is None:
@@ -168,7 +195,6 @@ def generate_variant(base_root, rng, variant_idx):
 
         xyz_str = origin_elem.attrib.get("xyz", "0 0 0")
         xyz     = [float(v) for v in xyz_str.split()]
-        # Scale only the z component (structural length along leg chain)
         xyz[2]  = xyz[2] * ls
         origin_elem.set("xyz", f"{xyz[0]:.8g} {xyz[1]:.8g} {xyz[2]:.8g}")
 
@@ -178,7 +204,6 @@ def generate_variant(base_root, rng, variant_idx):
         if jname not in ACTUATED_JOINTS:
             continue
 
-        # Joint range — scale symmetrically around centre
         limit_elem = joint.find("limit")
         if limit_elem is not None:
             lo   = float(limit_elem.attrib.get("lower", "0"))
@@ -189,22 +214,17 @@ def generate_variant(base_root, rng, variant_idx):
             limit_elem.set("lower", f"{ctr - half:.8g}")
             limit_elem.set("upper", f"{ctr + half:.8g}")
 
-            # Effort (gear proxy)
-            es   = joint_effort_scales[jname]
+            es          = joint_effort_scales[jname]
             orig_effort = float(limit_elem.attrib.get("effort", "88"))
             limit_elem.set("effort", f"{orig_effort * es:.4g}")
 
-        # Damping — add/update <dynamics> element
         dyn = joint.find("dynamics")
         if dyn is None:
             dyn = ET.SubElement(joint, "dynamics")
         dyn.set("damping",  f"{joint_damping_vals[jname]:.6g}")
-        dyn.set("friction", "0.0")   # keep friction at 0, only vary damping
+        dyn.set("friction", "0.0")
 
     # ── Armature: encode as small diagonal inertia addition ───────────────
-    # URDF has no armature field. We add armature * 1e-4 to ixx=iyy=izz
-    # of the child link for each actuated joint. This approximates the
-    # rotational inertia of the motor rotor.
     child_to_armature = {}
     for joint in root.iter("joint"):
         jname = joint.attrib.get("name", "")
@@ -232,6 +252,7 @@ def generate_variant(base_root, rng, variant_idx):
 
     # ── Build changes dict ────────────────────────────────────────────────
     changes = {
+        "varied_prop":        sorted(active_props),   # record what was varied
         "group_mass_scale":   group_mass,
         "group_length_scale": group_length,
         "joint_range_scale":  joint_range_scales,
@@ -263,13 +284,33 @@ def indent(elem, level=0):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--base_urdf",    required=True)
-    parser.add_argument("--out_dir",      default="resources/robots/g1_variants_v2")
-    parser.add_argument("--num_variants", type=int, default=10)
+    parser = argparse.ArgumentParser(
+        description="Generate URDF robot variants with controlled property variation."
+    )
+    parser.add_argument("--base_urdf",    required=True,
+                        help="Path to the base URDF file.")
+    parser.add_argument("--out_dir",      default="resources/robots/g1_variants_v2",
+                        help="Output directory for generated variants.")
+    parser.add_argument("--num_variants", type=int, default=10,
+                        help="Number of variants to generate.")
     parser.add_argument("--seed",         type=int, default=2025,
-                        help="Seed for reproducibility (default: 2025)")
+                        help="RNG seed for reproducibility (default: 2025).")
+    parser.add_argument(
+        "--vary_prop",
+        default="all",
+        choices=sorted(ALL_PROPS) + ["all"],
+        help=(
+            "Which property to randomise. All others are held at identity. "
+            "Choices: %(choices)s. Default: all (vary everything)."
+        ),
+    )
+    parser.add_argument("--base_xml", default=None,
+                    help="Path to base stripped MuJoCo XML for graph topology")
+
     args = parser.parse_args()
+
+    # Resolve the set of active properties
+    active_props = ALL_PROPS if args.vary_prop == "all" else {args.vary_prop}
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -277,16 +318,20 @@ def main():
     tree      = ET.parse(args.base_urdf)
     base_root = tree.getroot()
 
-    # Also copy base URDF as variant 0 (identity) for reference
+    # Copy base URDF as variant 0 (identity) for reference
     base_out = os.path.join(args.out_dir, "g1_12dof.urdf")
     indent(copy.deepcopy(base_root))
     tree.write(base_out, xml_declaration=True, encoding="unicode")
     print(f"[base] Copied → {base_out}")
 
+    if args.vary_prop == "all":
+        print("Varying ALL properties simultaneously.")
+    else:
+        print(f"Varying ONLY '{args.vary_prop}' — all other properties are identity.")
+
     rng = np.random.default_rng(args.seed)
     all_meta = {}
 
-    # Base height target for base robot
     BASE_LEG_Z      = 0.1027 + 0.17734 + 0.30001 + 0.017558
     BASE_HEIGHT_TGT = 0.78
 
@@ -294,7 +339,7 @@ def main():
         variant_name = f"robot_variant_{i}"
         print(f"\nGenerating {variant_name} ...")
 
-        variant_root, changes = generate_variant(base_root, rng, i)
+        variant_root, changes = generate_variant(base_root, rng, i, active_props)
 
         # Compute leg_z for base_height_target
         left_leg_z = 0.0
@@ -310,9 +355,9 @@ def main():
                 xyz = [float(v) for v in origin.attrib.get("xyz", "0 0 0").split()]
                 left_leg_z += abs(xyz[2])
 
-        leg_scale   = left_leg_z / BASE_LEG_Z
-        bht         = round(BASE_HEIGHT_TGT * leg_scale, 4)
-        fct         = round(0.08 * leg_scale, 4)
+        leg_scale = left_leg_z / BASE_LEG_Z
+        bht       = round(BASE_HEIGHT_TGT * leg_scale, 4)
+        fct       = round(0.08 * leg_scale, 4)
 
         # Save URDF
         indent(variant_root)
@@ -325,9 +370,11 @@ def main():
         with open(out_json, "w") as f:
             json.dump(changes, f, indent=2)
 
+        base_xml = args.base_xml or ""
+
         all_meta[variant_name] = {
             "urdf":                   out_urdf,
-            "xml":                    out_urdf,   # runner expects "xml" key too
+            "xml":                    base_xml,
             "leg_z":                  round(left_leg_z, 6),
             "leg_scale":              round(leg_scale, 6),
             "base_height_target":     bht,
@@ -348,15 +395,21 @@ def main():
         "feet_clearance_target":  0.08,
     }
 
-    # Write combined metadata
+    # Write combined metadata — tag it with which prop was varied
     meta_path = os.path.join(args.out_dir, "variants_metadata.json")
     with open(meta_path, "w") as f:
         json.dump(all_meta, f, indent=2)
 
+    # Store varied_prop separately if you need it:
+    prop_path = os.path.join(args.out_dir, "varied_prop.txt")
+    with open(prop_path, "w") as f:
+        f.write(args.vary_prop)
+
     print(f"\n{'='*60}")
     print(f"Generated {args.num_variants} variants + base robot")
-    print(f"Metadata → {meta_path}")
-    print(f"Seed used: {args.seed}  (use same seed to reproduce)")
+    print(f"Varied prop : {args.vary_prop}")
+    print(f"Metadata    → {meta_path}")
+    print(f"Seed used   : {args.seed}  (use same seed to reproduce)")
     print(f"{'='*60}")
     print("\nVariant summary:")
     print(f"  {'Name':<22} {'LegScale':>9} {'BaseHt':>7} {'FeetClear':>10}")

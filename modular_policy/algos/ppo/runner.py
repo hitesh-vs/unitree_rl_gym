@@ -133,6 +133,14 @@ class ModularRunner:
         if self.multi_variant:
             with open(variants_metadata_path) as f:
                 meta = json.load(f)
+            # Handle nested format from new generator
+            if "variants" in meta:
+                meta = meta["variants"]
+
+            # Force xml to base stripped XML for all variants
+            for name in meta:
+                meta[name]["xml"] = xml_path
+
             self.variant_names = list(meta.keys())
             self.variant_meta  = list(meta.values())
             self.num_variants  = len(self.variant_names)
