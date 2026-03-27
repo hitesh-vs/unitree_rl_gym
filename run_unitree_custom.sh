@@ -8,8 +8,8 @@
 #SBATCH -t 23:59:00
 #SBATCH --mem 128G
 #SBATCH --job-name="test"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_custom7.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_custom7.err
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_custom8.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_custom8.err
 
 # 1. Load basic modules
 module load cuda12.1/toolkit/12.1.1
@@ -59,10 +59,10 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 # 7. Execute
 python modular_policy/train_modular.py \
     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
-    --variants_metadata resources/robots/g1_variants_mass/variants_metadata.json \
+    --variants_metadata resources/robots/g1_variants_mass2/variants_metadata.json \
     --num_envs 512 \
     --headless \
     --graph_encoding rwse \
-    --resume output_walk_isaac_rwse/Mar24_16-45-40/model_100.pt \
-    --out_dir ./output_walk_mass \
+    --resume output_walk_mass/Mar26_00-58-03/model_500.pt \
+    --out_dir ./output_walk_mass2 \
     --seed 1409
