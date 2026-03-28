@@ -117,36 +117,144 @@ def _load_variant_graph(xml_path, max_limbs, max_joints,
     vd.num_limbs = num_limbs
 
     try:
-        # ── Context ───────────────────────────────────────────────────────
+        # ── Build body name lists for topo/kin alignment ──────────────────
         topo_names   = [m_topo.body(i).name for i in range(1, m_topo.nbody)]
         kin_names    = [m.body(i).name      for i in range(1, m.nbody)]
         kin_name_set = set(kin_names)
 
-        body_pos_list  = []
-        body_mass_list = []
-        for bname in topo_names:
-            if bname in kin_name_set:
-                idx = kin_names.index(bname) + 1
-                body_pos_list.append(m.body_pos[idx].copy())
-                body_mass_list.append(float(m.body_mass[idx]))
+        # ── Rich morphology context ───────────────────────────────────────
+        # Per limb (12 dims):
+        #   Module params: mass(1) + origin_x,y,z(3) + com_z(1)          = 5
+        #   Joint params:  lower,upper(2) + effort(1) + damping(1)        = 4
+        #   Joint axis:    axis_x,y,z(3)                                  = 3
+        #                                                            total = 12
+        #
+        # Root body (pelvis): joint fields (indices 4-11) = 0
+        # Global normalisation: fixed ranges so cross-robot differences preserved
+        MORPH_CTX_DIM = 12
+
+        # Build joint info lookup: child_link_name → joint properties
+        # Parse URDF XML directly — MuJoCo drops some joint attrs on load
+        import xml.etree.ElementTree as ET
+        urdf_tree = ET.parse(kin_path)
+        urdf_root = urdf_tree.getroot()
+
+        joint_info = {}   # child_link_name → dict of joint properties
+        for jnt in urdf_root.iter("joint"):
+            jtype = jnt.attrib.get("type", "fixed")
+            if jtype not in ("revolute", "prismatic"):
+                continue
+            child_elem = jnt.find("child")
+            if child_elem is None:
+                continue
+            child_link = child_elem.attrib.get("link", "")
+
+            # Joint range + effort
+            limit  = jnt.find("limit")
+            lower  = float(limit.attrib.get("lower", "0"))  if limit is not None else 0.
+            upper  = float(limit.attrib.get("upper", "0"))  if limit is not None else 0.
+            effort = float(limit.attrib.get("effort", "88")) if limit is not None else 88.
+
+            # Joint damping
+            dyn     = jnt.find("dynamics")
+            damping = float(dyn.attrib.get("damping", "0.001")) if dyn is not None else 0.001
+
+            # Joint axis
+            axis_elem = jnt.find("axis")
+            ax = ([float(v) for v in axis_elem.attrib.get("xyz", "0 0 1").split()]
+                  if axis_elem is not None else [0., 0., 1.])
+
+            # Full joint origin — position of child frame w.r.t. parent frame
+            orig_elem = jnt.find("origin")
+            if orig_elem is not None:
+                origin = [float(v) for v in orig_elem.attrib.get("xyz", "0 0 0").split()]
             else:
-                topo_idx = topo_names.index(bname) + 1
-                body_pos_list.append(m_topo.body_pos[topo_idx].copy())
-                body_mass_list.append(float(m_topo.body_mass[topo_idx]))
+                origin = [0., 0., 0.]
 
-        body_pos  = np.array(body_pos_list,  dtype=np.float32)
-        body_mass = np.array(body_mass_list, dtype=np.float32)
+            joint_info[child_link] = {
+                "lower":   lower,
+                "upper":   upper,
+                "effort":  effort,
+                "damping": damping,
+                "axis":    ax,
+                "origin":  origin,   # [x, y, z]
+            }
 
-        bp_range    = body_pos.max(0) - body_pos.min(0) + 1e-8
-        body_pos_n  = -1. + 2. * (body_pos - body_pos.min(0)) / bp_range
-        bm_range    = body_mass.max() - body_mass.min() + 1e-8
-        body_mass_n = -1. + 2. * (body_mass - body_mass.min()) / bm_range
-        ctx     = np.concatenate([body_pos_n, body_mass_n[:, None]], axis=1)
-        ctx_pad = np.zeros((max_limbs, ctx.shape[1]), dtype=np.float32)
-        ctx_pad[:num_limbs] = ctx
+        # ── Global normalisation ranges ───────────────────────────────────
+        # Fixed across all variants so cross-robot differences are preserved.
+        # Ranges chosen from G1 base robot extremes with ±margin.
+        NORM_RANGES = {
+            "mass":     (0.05,  20.0),    # kg — ankle ~0.07, pelvis ~17.7
+            "origin_x": (-0.15, 0.15),   # m — lateral offsets
+            "origin_y": (-0.15, 0.15),   # m — fore-aft offsets
+            "origin_z": (-0.35, 0.05),   # m — vertical (mostly negative)
+            "com_z":    (-0.20, 0.20),   # m — CoM height in body frame
+            "lower":    (-3.2,  0.0),    # rad
+            "upper":    (0.0,   3.2),    # rad
+            "effort":   (30.,   170.),   # Nm
+            "damping":  (0.0,   0.005),  # Nm·s/rad
+            "axis_x":   (-1.,   1.),
+            "axis_y":   (-1.,   1.),
+            "axis_z":   (-1.,   1.),
+        }
+
+        def norm(val, key):
+            lo, hi = NORM_RANGES[key]
+            return float(np.clip(
+                2. * (val - lo) / (hi - lo + 1e-8) - 1., -1., 1.))
+
+        ctx_raw = np.zeros((num_limbs, MORPH_CTX_DIM), dtype=np.float32)
+
+        for li, bname in enumerate(topo_names[:num_limbs]):
+
+            # ── Module parameters ─────────────────────────────────────────
+            if bname in kin_name_set:
+                kidx = kin_names.index(bname) + 1
+                mass = float(m.body_mass[kidx])
+                com  = m.body_ipos[kidx]          # CoM in body frame [x,y,z]
+            else:
+                # Pelvis — falls back to topology model
+                tidx = topo_names.index(bname) + 1
+                mass = float(m_topo.body_mass[tidx])
+                com  = m_topo.body_ipos[tidx]
+
+            ctx_raw[li, 0] = norm(mass,    "mass")
+
+            # Joint origin = geometric position of this link w.r.t. parent
+            # (zero for pelvis since it has no parent joint)
+            if bname in joint_info:
+                ji = joint_info[bname]
+                ctx_raw[li, 1] = norm(ji["origin"][0], "origin_x")
+                ctx_raw[li, 2] = norm(ji["origin"][1], "origin_y")
+                ctx_raw[li, 3] = norm(ji["origin"][2], "origin_z")
+            # else: root body — origin fields stay 0
+
+            # CoM z as shape proxy (encodes link geometry)
+            ctx_raw[li, 4] = norm(float(com[2]), "com_z")
+
+            # ── Joint parameters ──────────────────────────────────────────
+            if bname in joint_info:
+                ji = joint_info[bname]
+                ctx_raw[li, 5]  = norm(ji["lower"],   "lower")
+                ctx_raw[li, 6]  = norm(ji["upper"],   "upper")
+                ctx_raw[li, 7]  = norm(ji["effort"],  "effort")
+                ctx_raw[li, 8]  = norm(ji["damping"], "damping")
+                ctx_raw[li, 9]  = norm(ji["axis"][0], "axis_x")
+                ctx_raw[li, 10] = norm(ji["axis"][1], "axis_y")
+                ctx_raw[li, 11] = norm(ji["axis"][2], "axis_z")
+            # else: root body — joint fields stay 0
+
+        ctx_pad = np.zeros((max_limbs, MORPH_CTX_DIM), dtype=np.float32)
+        ctx_pad[:num_limbs] = ctx_raw
         vd.context = torch.tensor(
             ctx_pad.flatten(), dtype=torch.float32, device=device).unsqueeze(0)
-        print(f"    context OK: shape={vd.context.shape}", flush=True)
+        print(f"    context OK: shape={vd.context.shape} "
+              f"(12 dims/limb, globally normalised)", flush=True)
+
+    except Exception as e:
+        print(f"  ERROR in context block: {e}", flush=True)
+        import traceback; traceback.print_exc()
+        raise
 
     except Exception as e:
         print(f"  ERROR in context block: {e}", flush=True)

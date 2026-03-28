@@ -222,7 +222,7 @@ def main():
 
     prop_dim      = ckpt["ob_mean"].shape[0]   # 338
     limb_obs_size = prop_dim // cfg.MODEL.MAX_LIMBS  # 26
-    ctx_dim       = cfg.MODEL.MAX_LIMBS * 4    # 52
+    ctx_dim       = cfg.MODEL.MAX_LIMBS * cfg.MODEL.MORPH_CTX_DIM # 13 x 12
 
     print(f"prop_dim={prop_dim} limb_obs_size={limb_obs_size}")
 

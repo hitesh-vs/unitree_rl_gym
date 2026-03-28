@@ -7,9 +7,9 @@
 #SBATCH --gres=gpu:L40S:1
 #SBATCH -t 23:59:00
 #SBATCH --mem 128G
-#SBATCH --job-name="test"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_custom8.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_custom8.err
+#SBATCH --job-name="upd-morph"
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_custom9.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_custom9.err
 
 # 1. Load basic modules
 module load cuda12.1/toolkit/12.1.1
@@ -63,6 +63,5 @@ python modular_policy/train_modular.py \
     --num_envs 512 \
     --headless \
     --graph_encoding rwse \
-    --resume output_walk_mass/Mar26_00-58-03/model_500.pt \
-    --out_dir ./output_walk_mass2 \
+    --out_dir ./output_walk_mass3 \
     --seed 1409

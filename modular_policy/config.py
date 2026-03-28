@@ -75,6 +75,7 @@ cfg.MODEL = _Namespace(
     MAX_JOINTS       = 12,
     MAX_LIMBS        = 13,
     ACTION_STD       = 0.9,
+    MORPH_CTX_DIM    = 12,
     ACTION_STD_FIXED = False,
     GRAPH_ENCODING   = "topological",   # "none" | "onehot" | "topological"
     OBS_TO_NORM      = ["proprioceptive"],
