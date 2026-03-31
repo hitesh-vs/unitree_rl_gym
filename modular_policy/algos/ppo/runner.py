@@ -195,6 +195,12 @@ class ModularRunner:
         self.commands        = torch.zeros(self.num_envs, 3,                   device=self.device)
         self._resample_commands(torch.arange(self.num_envs, device=self.device))
 
+        # ── FiLM diagnostic cache ─────────────────────────────────────────
+        # Populated at the end of each rollout; read by _log.
+        # Shape when set: (max_limbs, num_envs, 12) — same layout as
+        # obs_context after the reshape/permute in ActorCritic.forward.
+        self._last_obs_ctx = None
+
         # ── DOF limits ───────────────────────────────────────────────────
         print("[ModularRunner] Building DOF limits...", flush=True)
         self._build_dof_limits()
@@ -297,6 +303,16 @@ class ModularRunner:
                     rewards.unsqueeze(1), masks, timeouts,
                     dmv, dmmu, unimal_ids)
                 obs = obs_next
+
+            # Cache obs_ctx for FiLM diagnostics in _log.
+            # obs["context"] is (N, max_limbs * 12); reshape to (L, N, 12)
+            # which is the same layout TransformerModel.forward receives.
+            self._last_obs_ctx = (
+                obs["context"]
+                .reshape(self.num_envs, self.obs_builder.max_limbs, -1)
+                .permute(1, 0, 2)
+                .detach()
+            )
 
             t_rollout = time.time()
 
@@ -766,3 +782,45 @@ class ModularRunner:
                 if len(meter.ep_len) > 0:
                     self.writer.add_scalar(f"EpLen/variant_{name}",
                                            float(np.mean(meter.ep_len)), cur_iter)
+
+            # ── FiLM diagnostics ──────────────────────────────────────────
+            # film_generator is None when USE_FILM=False, so this whole
+            # block is a no-op in non-FiLM runs.
+            fg = self.actor_critic.mu_net.film_generator
+            if fg is not None and self._last_obs_ctx is not None:
+                with torch.no_grad():
+                    gamma, beta = fg(self._last_obs_ctx)
+                    # gamma, beta: (max_limbs, num_envs, d_model)
+
+                    # Global activation check — should grow from ~0 early in training
+                    self.writer.add_scalar(
+                        "FiLM/gamma_std",  gamma.std().item(),  cur_iter)
+                    self.writer.add_scalar(
+                        "FiLM/gamma_mean", gamma.mean().item(), cur_iter)
+                    self.writer.add_scalar(
+                        "FiLM/beta_std",   beta.std().item(),   cur_iter)
+                    self.writer.add_scalar(
+                        "FiLM/beta_mean",  beta.mean().item(),  cur_iter)
+
+                    # Per-limb discrimination: std across the batch dimension
+                    # for each limb, then averaged over d_model.
+                    # High value = generator is producing different gamma/beta
+                    # per environment (i.e. it's actually using the context).
+                    # Low value = generator ignores context, outputs constant.
+                    limb_gamma_std = gamma.std(dim=1).mean(dim=-1)  # (max_limbs,)
+                    limb_beta_std  = beta.std(dim=1).mean(dim=-1)   # (max_limbs,)
+                    self.writer.add_scalar(
+                        "FiLM/limb_gamma_std_mean",
+                        limb_gamma_std.mean().item(), cur_iter)
+                    self.writer.add_scalar(
+                        "FiLM/limb_beta_std_mean",
+                        limb_beta_std.mean().item(),  cur_iter)
+
+                    # Inter-limb discrimination: std of per-limb mean gamma
+                    # across limb positions. High value = different limb types
+                    # receive meaningfully different scaling — the core goal.
+                    limb_gamma_mean = gamma.mean(dim=1)              # (max_limbs, d_model)
+                    inter_limb_std  = limb_gamma_mean.std(dim=0).mean()
+                    self.writer.add_scalar(
+                        "FiLM/inter_limb_gamma_std",
+                        inter_limb_std.item(), cur_iter)

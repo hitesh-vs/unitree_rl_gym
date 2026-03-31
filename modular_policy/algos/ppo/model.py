@@ -12,6 +12,48 @@ from modular_policy.algos.ppo.transformer import (
 from modular_policy.algos.ppo.gcn import build_gcn_from_cfg
 # No gym import — obs_space is _DictSpace from obs_builder
 
+class FiLMGenerator(nn.Module):
+    """
+    Per-limb FiLM: obs_context (L, B, ctx_dim) -> gamma, beta each (L, B, d_model).
+
+    Architecture mirrors FIX_ATTENTION's context_embed_attention path exactly:
+        Linear(ctx_dim, CONTEXT_EMBED_SIZE)
+        -> ReLU -> [Linear(H,H) -> ReLU] x LINEAR_CONTEXT_LAYER
+        -> Linear(CONTEXT_EMBED_SIZE, 2 * d_model)
+
+    Identity init: gamma bias=1, beta bias=0.
+    Network starts as a no-op; training sculpts from a stable baseline.
+    """
+    def __init__(self, ctx_dim_per_limb: int, d_model: int):
+        super().__init__()
+        H = cfg.MODEL.TRANSFORMER.CONTEXT_EMBED_SIZE
+
+        self.embed = nn.Linear(ctx_dim_per_limb, H)
+
+        layers = [nn.ReLU()]
+        for _ in range(cfg.MODEL.TRANSFORMER.LINEAR_CONTEXT_LAYER):
+            layers += [nn.Linear(H, H), nn.ReLU()]
+        self.encoder = nn.Sequential(*layers)
+
+        self.out = nn.Linear(H, 2 * d_model)
+        self._init_weights(d_model)
+
+    def _init_weights(self, d_model):
+        r = cfg.MODEL.TRANSFORMER.EMBED_INIT
+        self.embed.weight.data.uniform_(-r, r)
+        self.embed.bias.data.zero_()
+        # Zero weights on out-projection so the bias fully controls init
+        nn.init.zeros_(self.out.weight)
+        self.out.bias.data[:d_model] = 1.0   # gamma -> 1
+        self.out.bias.data[d_model:] = 0.0   # beta  -> 0
+
+    def forward(self, obs_context):
+        # obs_context: (L, B, ctx_dim_per_limb)
+        h     = self.embed(obs_context)    # (L, B, H)
+        h     = self.encoder(h)            # (L, B, H)
+        out   = self.out(h)                # (L, B, 2*d_model)
+        d     = out.shape[-1] // 2
+        return out[..., :d], out[..., d:]  # gamma, beta
 
 class TransformerModel(nn.Module):
     def __init__(self, obs_space, decoder_out_dim):
@@ -87,6 +129,15 @@ class TransformerModel(nn.Module):
                                           self.model_args.CONTEXT_EMBED_SIZE),
                                 nn.ReLU()]
                 self.context_encoder_attention = nn.Sequential(*modules)
+        
+        if self.model_args.USE_FILM:
+            context_obs_size = obs_space["context"].shape[0] // self.seq_len
+            self.film_generator = FiLMGenerator(
+                ctx_dim_per_limb=context_obs_size,
+                d_model=self.d_model,
+            )
+        else:
+            self.film_generator = None
 
         if self.model_args.HYPERNET:
             context_obs_size = obs_space["context"].shape[0] // self.seq_len
@@ -204,6 +255,15 @@ class TransformerModel(nn.Module):
                 gcn_emb   = self.gcn(X.float(), A_norm.float())
                 gcn_emb   = gcn_emb.permute(1, 0, 2)
                 obs_embed = obs_embed + self.gcn_proj(gcn_emb)
+        
+        # NEW: FiLM modulation
+        # Runs after GCN so it modulates the full (limb_embed + gcn) signal.
+        # Runs before pos encoding so position is added on top, not modulated.
+        # obs_context is (L, B, 12) — same tensor FIX_ATTENTION reads.
+        if self.film_generator is not None:
+            gamma, beta = self.film_generator(obs_context)
+            obs_embed   = gamma * obs_embed + beta   # NEW
+
         
         # Capture embeddings for t-SNE if active
         if self._tsne_buffer["active"]:

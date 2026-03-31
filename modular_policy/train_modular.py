@@ -47,6 +47,8 @@ def parse_args():
     p.add_argument("--max_iters", type=int, default=3000)
     p.add_argument("--graph_encoding", type=str, default="topological",
                choices=["none", "onehot", "topological", "rwse"])
+    p.add_argument("--film", action="store_true", default=False,
+                   help="Enable FiLM morphology conditioning on per-limb embeddings")
     return p.parse_args()
 
 
@@ -66,6 +68,7 @@ def main():
     cfg.PPO.MAX_ITERS            = args.max_iters
     cfg.PPO.EARLY_EXIT_MAX_ITERS = args.max_iters
     cfg.MODEL.GRAPH_ENCODING     = args.graph_encoding
+    cfg.MODEL.TRANSFORMER.USE_FILM = args.film
     cfg.DEVICE                   = args.rl_device
     cfg.OUT_DIR                  = args.out_dir
 

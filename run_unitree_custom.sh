@@ -7,9 +7,9 @@
 #SBATCH --gres=gpu:L40S:1
 #SBATCH -t 23:59:00
 #SBATCH --mem 128G
-#SBATCH --job-name="upd-morph"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_custom9.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_custom9.err
+#SBATCH --job-name="base"
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_baseline.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_baseline.err
 
 # 1. Load basic modules
 module load cuda12.1/toolkit/12.1.1
@@ -59,9 +59,9 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 # 7. Execute
 python modular_policy/train_modular.py \
     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
-    --variants_metadata resources/robots/g1_variants_mass2/variants_metadata.json \
+    --variants_metadata resources/robots/g1_variants_mass/variants_metadata.json \
     --num_envs 512 \
     --headless \
-    --graph_encoding rwse \
-    --out_dir ./output_walk_mass3 \
-    --seed 1409
+    --graph_encoding none \
+    --out_dir ./output_baseline \
+    --seed 1409 

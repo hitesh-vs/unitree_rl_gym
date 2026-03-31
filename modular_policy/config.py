@@ -128,6 +128,7 @@ cfg.MODEL.TRANSFORMER = _Namespace(
     TRAVERSALS          = ["pre", "inlcrs", "postlcrs"],
     PER_NODE_EMBED      = False,
     PER_NODE_DECODER    = False,
+    USE_FILM            = False,
 )
 
 # ── MODEL.GCN ─────────────────────────────────────────────────────────────────

@@ -1,0 +1,70 @@
+{
+  "varied_prop": [
+    "damping"
+  ],
+  "group_mass_scale": {
+    "left_leg": 1.0,
+    "right_leg": 1.0,
+    "torso": 1.0
+  },
+  "group_length_scale": {
+    "left_leg": 1.0,
+    "right_leg": 1.0
+  },
+  "joint_range_scale": {
+    "left_hip_pitch_joint": 1.0,
+    "left_hip_roll_joint": 1.0,
+    "left_hip_yaw_joint": 1.0,
+    "left_knee_joint": 1.0,
+    "left_ankle_pitch_joint": 1.0,
+    "left_ankle_roll_joint": 1.0,
+    "right_hip_pitch_joint": 1.0,
+    "right_hip_roll_joint": 1.0,
+    "right_hip_yaw_joint": 1.0,
+    "right_knee_joint": 1.0,
+    "right_ankle_pitch_joint": 1.0,
+    "right_ankle_roll_joint": 1.0
+  },
+  "joint_effort_scale": {
+    "left_hip_pitch_joint": 1.0,
+    "left_hip_roll_joint": 1.0,
+    "left_hip_yaw_joint": 1.0,
+    "left_knee_joint": 1.0,
+    "left_ankle_pitch_joint": 1.0,
+    "left_ankle_roll_joint": 1.0,
+    "right_hip_pitch_joint": 1.0,
+    "right_hip_roll_joint": 1.0,
+    "right_hip_yaw_joint": 1.0,
+    "right_knee_joint": 1.0,
+    "right_ankle_pitch_joint": 1.0,
+    "right_ankle_roll_joint": 1.0
+  },
+  "joint_damping": {
+    "left_hip_pitch_joint": 0.0012966746831006566,
+    "left_hip_roll_joint": 0.0009292058445502886,
+    "left_hip_yaw_joint": 0.00119628880768366,
+    "left_knee_joint": 0.0012023531657139937,
+    "left_ankle_pitch_joint": 0.0012854854060941744,
+    "left_ankle_roll_joint": 0.000746335017315981,
+    "right_hip_pitch_joint": 0.0008904738458043154,
+    "right_hip_roll_joint": 0.001251733244138836,
+    "right_hip_yaw_joint": 0.0011055217389900577,
+    "right_knee_joint": 0.0008714949613393702,
+    "right_ankle_pitch_joint": 0.0009337258148959416,
+    "right_ankle_roll_joint": 0.0008381317356304715
+  },
+  "joint_armature": {
+    "left_hip_pitch_joint": 0.01,
+    "left_hip_roll_joint": 0.01,
+    "left_hip_yaw_joint": 0.01,
+    "left_knee_joint": 0.01,
+    "left_ankle_pitch_joint": 0.01,
+    "left_ankle_roll_joint": 0.01,
+    "right_hip_pitch_joint": 0.01,
+    "right_hip_roll_joint": 0.01,
+    "right_hip_yaw_joint": 0.01,
+    "right_knee_joint": 0.01,
+    "right_ankle_pitch_joint": 0.01,
+    "right_ankle_roll_joint": 0.01
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "robot_variant_0": {
+    "urdf": "resources/robots/g1_variants_damping/robot_variant_0.urdf",
+    "xml": "",
+    "leg_z": 0.597608,
+    "leg_scale": 1.0,
+    "base_height_target": 0.78,
+    "feet_clearance_target": 0.08
+  },
+  "robot_variant_1": {
+    "urdf": "resources/robots/g1_variants_damping/robot_variant_1.urdf",
+    "xml": "",
+    "leg_z": 0.597608,
+    "leg_scale": 1.0,
+    "base_height_target": 0.78,
+    "feet_clearance_target": 0.08
+  },
+  "robot_variant_2": {
+    "urdf": "resources/robots/g1_variants_damping/robot_variant_2.urdf",
+    "xml": "",
+    "leg_z": 0.597608,
+    "leg_scale": 1.0,
+    "base_height_target": 0.78,
+    "feet_clearance_target": 0.08
+  },
+  "robot_variant_3": {
+    "urdf": "resources/robots/g1_variants_damping/robot_variant_3.urdf",
+    "xml": "",
+    "leg_z": 0.597608,
+    "leg_scale": 1.0,
+    "base_height_target": 0.78,
+    "feet_clearance_target": 0.08
+  },
+  "robot_variant_4": {
+    "urdf": "resources/robots/g1_variants_damping/robot_variant_4.urdf",
+    "xml": "",
+    "leg_z": 0.597608,
+    "leg_scale": 1.0,
+    "base_height_target": 0.78,
+    "feet_clearance_target": 0.08
+  },
+  "g1_12dof": {
+    "urdf": "resources/robots/g1_variants_damping/g1_12dof.urdf",
+    "xml": "resources/robots/g1_variants_damping/g1_12dof.urdf",
+    "leg_z": 0.597608,
+    "leg_scale": 1.0,
+    "base_height_target": 0.78,
+    "feet_clearance_target": 0.08
+  }
+}

@@ -393,7 +393,7 @@ class ObsBuilder:
         self.max_joints  = cfg.MODEL.MAX_JOINTS
         self.graph_enc   = cfg.MODEL.GRAPH_ENCODING
 
-        use_ltv = (self.graph_enc == "none")
+        use_ltv = False
         self.use_ltv       = use_ltv
         self.limb_obs_size = 32 if use_ltv else 26
 
