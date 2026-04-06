@@ -66,10 +66,25 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 #     --device cpu
 
 # 7. Execute (Multi robot)
-python deploy/deploy_mujoco/record_traj_all_variants.py \
-    --checkpoint output_multi_robot2/Mar23_16-41-47/model_600.pt \
-    --variants_metadata resources/robots/g1_variants/variants_metadata.json \
-    --out_dir trajectories2/ \
-    --duration 10.0 \
-    --cmd_vx 0.5 \
-    --graph_encoding topological
+# python deploy/deploy_mujoco/record_traj_all_variants.py \
+#     --checkpoint output_multi_robot2/Mar23_16-41-47/model_600.pt \
+#     --variants_metadata resources/robots/g1_variants/variants_metadata.json \
+#     --out_dir trajectories2/ \
+#     --duration 10.0 \
+#     --cmd_vx 0.5 \
+#     --graph_encoding topological
+
+# python deploy/deploy_mujoco/eval_zeroshot.py \
+#     --checkpoint /home/sviswasam/dr/unitree_rl_gym/output_film_wide/Mar31_18-18-17/model_400.pt \
+#     --variants_metadata resources/robots/g1_variants_heldout/variants_metadata.json \
+#     --base_xml /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
+#     --graph_encoding rwse --duration 20.0 --cmd_vx 0.5 \
+#     --out_dir eval_results/film_heldout2
+
+python deploy/deploy_mujoco/record_traj_zero_shot.py \
+    --checkpoint output_film_wide/Mar31_18-18-17/model_400.pt \
+    --variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
+    --train_variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
+    --base_xml /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
+    --out_dir trajectories/film_heldout \
+    --duration 10.0 --cmd_vx 0.5 --graph_encoding rwse

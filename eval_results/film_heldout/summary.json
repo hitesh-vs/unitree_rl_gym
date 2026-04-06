@@ -1,0 +1,50 @@
+{
+  "robot_variant_0": {
+    "episodes": 21,
+    "mean_return": 0.609,
+    "mean_ep_len_s": 0.95,
+    "max_ep_len_s": 1.04,
+    "fall_rate": 0.952,
+    "elapsed_s": 10.3
+  },
+  "robot_variant_1": {
+    "episodes": 20,
+    "mean_return": 0.653,
+    "mean_ep_len_s": 1.0,
+    "max_ep_len_s": 1.06,
+    "fall_rate": 0.95,
+    "elapsed_s": 10.9
+  },
+  "robot_variant_2": {
+    "episodes": 20,
+    "mean_return": 0.627,
+    "mean_ep_len_s": 1.0,
+    "max_ep_len_s": 1.06,
+    "fall_rate": 0.95,
+    "elapsed_s": 10.9
+  },
+  "robot_variant_3": {
+    "episodes": 20,
+    "mean_return": 0.669,
+    "mean_ep_len_s": 1.0,
+    "max_ep_len_s": 1.1,
+    "fall_rate": 0.95,
+    "elapsed_s": 10.9
+  },
+  "robot_variant_4": {
+    "episodes": 21,
+    "mean_return": 0.578,
+    "mean_ep_len_s": 0.95,
+    "max_ep_len_s": 1.04,
+    "fall_rate": 0.952,
+    "elapsed_s": 10.5
+  },
+  "g1_12dof": {
+    "episodes": 22,
+    "mean_return": 0.552,
+    "mean_ep_len_s": 0.91,
+    "max_ep_len_s": 1.06,
+    "fall_rate": 0.955,
+    "elapsed_s": 10.2
+  }
+}

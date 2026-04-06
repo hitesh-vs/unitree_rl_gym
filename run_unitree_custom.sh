@@ -8,8 +8,8 @@
 #SBATCH -t 23:59:00
 #SBATCH --mem 128G
 #SBATCH --job-name="base"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_baseline.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_baseline.err
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_baseline2.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_baseline2.err
 
 # 1. Load basic modules
 module load cuda12.1/toolkit/12.1.1
@@ -59,9 +59,9 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 # 7. Execute
 python modular_policy/train_modular.py \
     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
-    --variants_metadata resources/robots/g1_variants_mass/variants_metadata.json \
+    --variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
     --num_envs 512 \
     --headless \
     --graph_encoding none \
-    --out_dir ./output_baseline \
+    --out_dir ./output_baseline_wide \
     --seed 1409 

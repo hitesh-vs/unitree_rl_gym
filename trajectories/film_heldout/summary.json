@@ -1,0 +1,101 @@
+{
+  "robot_variant_0": {
+    "episodes": 6,
+    "mean_return": 0.969,
+    "mean_ep_len": 1.67,
+    "max_ep_len": 2.06,
+    "fall_rate": 0.833,
+    "stats_src": "training row 0",
+    "pkl": "trajectories/film_heldout/traj_robot_variant_0.pkl"
+  },
+  "robot_variant_1": {
+    "episodes": 8,
+    "mean_return": 0.515,
+    "mean_ep_len": 1.25,
+    "max_ep_len": 1.7,
+    "fall_rate": 0.875,
+    "stats_src": "training row 1",
+    "pkl": "trajectories/film_heldout/traj_robot_variant_1.pkl"
+  },
+  "robot_variant_2": {
+    "episodes": 6,
+    "mean_return": 0.961,
+    "mean_ep_len": 1.67,
+    "max_ep_len": 2.28,
+    "fall_rate": 0.833,
+    "stats_src": "training row 2",
+    "pkl": "trajectories/film_heldout/traj_robot_variant_2.pkl"
+  },
+  "robot_variant_3": {
+    "episodes": 7,
+    "mean_return": 0.921,
+    "mean_ep_len": 1.43,
+    "max_ep_len": 2.1,
+    "fall_rate": 0.857,
+    "stats_src": "training row 3",
+    "pkl": "trajectories/film_heldout/traj_robot_variant_3.pkl"
+  },
+  "robot_variant_4": {
+    "episodes": 9,
+    "mean_return": 0.378,
+    "mean_ep_len": 1.11,
+    "max_ep_len": 1.38,
+    "fall_rate": 0.889,
+    "stats_src": "training row 4",
+    "pkl": "trajectories/film_heldout/traj_robot_variant_4.pkl"
+  },
+  "robot_variant_5": {
+    "episodes": 5,
+    "mean_return": 1.149,
+    "mean_ep_len": 2.0,
+    "max_ep_len": 3.42,
+    "fall_rate": 0.8,
+    "stats_src": "training row 5",
+    "pkl": "trajectories/film_heldout/traj_robot_variant_5.pkl"
+  },
+  "robot_variant_6": {
+    "episodes": 7,
+    "mean_return": 0.535,
+    "mean_ep_len": 1.43,
+    "max_ep_len": 2.52,
+    "fall_rate": 0.857,
+    "stats_src": "training row 6",
+    "pkl": "trajectories/film_heldout/traj_robot_variant_6.pkl"
+  },
+  "robot_variant_7": {
+    "episodes": 4,
+    "mean_return": 1.373,
+    "mean_ep_len": 2.5,
+    "max_ep_len": 3.82,
+    "fall_rate": 0.75,
+    "stats_src": "training row 7",
+    "pkl": "trajectories/film_heldout/traj_robot_variant_7.pkl"
+  },
+  "robot_variant_8": {
+    "episodes": 7,
+    "mean_return": 0.573,
+    "mean_ep_len": 1.43,
+    "max_ep_len": 1.62,
+    "fall_rate": 0.857,
+    "stats_src": "training row 8",
+    "pkl": "trajectories/film_heldout/traj_robot_variant_8.pkl"
+  },
+  "robot_variant_9": {
+    "episodes": 5,
+    "mean_return": 1.224,
+    "mean_ep_len": 2.0,
+    "max_ep_len": 2.66,
+    "fall_rate": 0.8,
+    "stats_src": "training row 9",
+    "pkl": "trajectories/film_heldout/traj_robot_variant_9.pkl"
+  },
+  "g1_12dof": {
+    "episodes": 6,
+    "mean_return": 0.969,
+    "mean_ep_len": 1.67,
+    "max_ep_len": 2.36,
+    "fall_rate": 0.833,
+    "stats_src": "training row 10",
+    "pkl": "trajectories/film_heldout/traj_g1_12dof.pkl"
+  }
+}

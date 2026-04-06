@@ -1,0 +1,76 @@
+{
+  "varied_prop": [
+    "armature",
+    "damping",
+    "effort",
+    "joint_range",
+    "length",
+    "mass"
+  ],
+  "allow_asymmetry": true,
+  "group_mass_scale": {
+    "left_leg": 0.755862479013252,
+    "right_leg": 1.328917038632506,
+    "torso": 3.4523052841730357
+  },
+  "group_length_scale": {
+    "left_leg": 0.926965708875987,
+    "right_leg": 0.9212760861760626
+  },
+  "joint_range_scale": {
+    "left_hip_pitch_joint": 1.112402006535526,
+    "left_hip_roll_joint": 1.4003861482256386,
+    "left_hip_yaw_joint": 0.7364130743015912,
+    "left_knee_joint": 0.7580945650550941,
+    "left_ankle_pitch_joint": 0.5524245378181954,
+    "left_ankle_roll_joint": 1.0927946393185972,
+    "right_hip_pitch_joint": 1.3007429575307616,
+    "right_hip_roll_joint": 0.8833825303125162,
+    "right_hip_yaw_joint": 1.5646098992409312,
+    "right_knee_joint": 0.7342149898997654,
+    "right_ankle_pitch_joint": 1.5901733925406032,
+    "right_ankle_roll_joint": 0.8489379789298561
+  },
+  "joint_effort_scale": {
+    "left_hip_pitch_joint": 1.137484816161711,
+    "left_hip_roll_joint": 1.150085020275199,
+    "left_hip_yaw_joint": 1.5046371679759247,
+    "left_knee_joint": 0.5240047794342617,
+    "left_ankle_pitch_joint": 1.4398000737599537,
+    "left_ankle_roll_joint": 1.564695749492065,
+    "right_hip_pitch_joint": 1.6436695522970812,
+    "right_hip_roll_joint": 1.5700503137839983,
+    "right_hip_yaw_joint": 0.30964242355030047,
+    "right_knee_joint": 1.7260481177302023,
+    "right_ankle_pitch_joint": 1.7981742896728414,
+    "right_ankle_roll_joint": 1.1876229334563277
+  },
+  "joint_damping": {
+    "left_hip_pitch_joint": 0.0025832035357644654,
+    "left_hip_roll_joint": 0.0013975065065994297,
+    "left_hip_yaw_joint": 0.001507512889274167,
+    "left_knee_joint": 0.0021122943293507804,
+    "left_ankle_pitch_joint": 0.0008398024482704405,
+    "left_ankle_roll_joint": 0.0028100954112512447,
+    "right_hip_pitch_joint": 0.001408875762691107,
+    "right_hip_roll_joint": 0.0016692131816866034,
+    "right_hip_yaw_joint": 0.0003499624464049237,
+    "right_knee_joint": 0.001176882824489897,
+    "right_ankle_pitch_joint": 0.0009900794030746625,
+    "right_ankle_roll_joint": 0.0015284466743233037
+  },
+  "joint_armature": {
+    "left_hip_pitch_joint": 0.005681795925870721,
+    "left_hip_roll_joint": 0.014559178704532827,
+    "left_hip_yaw_joint": 0.028254006145296242,
+    "left_knee_joint": 0.0032597185537908534,
+    "left_ankle_pitch_joint": 0.003098896270552917,
+    "left_ankle_roll_joint": 0.010570700263589392,
+    "right_hip_pitch_joint": 0.009732097012216676,
+    "right_hip_roll_joint": 0.004230931231519754,
+    "right_hip_yaw_joint": 0.006699372889959169,
+    "right_knee_joint": 0.021032625312940863,
+    "right_ankle_pitch_joint": 0.01262221717249708,
+    "right_ankle_roll_joint": 0.007590614738294313
+  }
+}
