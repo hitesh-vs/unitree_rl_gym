@@ -8,10 +8,11 @@
 #SBATCH -t 23:59:00
 #SBATCH --mem 128G
 #SBATCH --job-name="base"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_baseline2.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_baseline2.err
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_debug.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_debug.err
 
 # 1. Load basic modules
+source /etc/profile.d/modules.sh
 module load cuda12.1/toolkit/12.1.1
 module load libx11/1.8.12/wtcqjwl
 module load glew/2.2.0/azi6l2x
@@ -62,6 +63,9 @@ python modular_policy/train_modular.py \
     --variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
     --num_envs 512 \
     --headless \
-    --graph_encoding none \
-    --out_dir ./output_baseline_wide \
-    --seed 1409 
+    --out_dir ./debug \
+    --seed 1409 \
+    --graph_encoding rwse \
+    --film \
+    --resume output_film_wide/Mar31_18-18-17/model_400.pt \
+    --max_iters 1

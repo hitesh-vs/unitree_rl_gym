@@ -4,14 +4,15 @@
 #SBATCH -p short
 #SBATCH -N 1
 #SBATCH -c 2
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:L40S:1
 #SBATCH -t 00:15:00
-#SBATCH --mem 16G
+#SBATCH --mem 64G
 #SBATCH --job-name="record"
 #SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_video3.log
 #SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_video3.err
 
 # 1. Load basic modules
+source /etc/profile.d/modules.sh
 module load cuda12.1/toolkit/12.1.1
 module load libx11/1.8.12/wtcqjwl
 module load glew/2.2.0/azi6l2x
@@ -81,10 +82,20 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 #     --graph_encoding rwse --duration 20.0 --cmd_vx 0.5 \
 #     --out_dir eval_results/film_heldout2
 
-python deploy/deploy_mujoco/record_traj_zero_shot.py \
-    --checkpoint output_film_wide/Mar31_18-18-17/model_400.pt \
+# python deploy/deploy_mujoco/record_traj_zero_shot.py \
+#     --checkpoint output_film_wide/Mar31_18-18-17/model_400.pt \
+#     --variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
+#     --train_variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
+#     --base_xml /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
+#     --out_dir trajectories/film_heldout \
+#     --duration 10.0 --cmd_vx 0.5 --graph_encoding rwse
+
+python deploy/deploy_mujoco/test_script2.py \
+    --checkpoint output_baseline_wide/Mar31_18-20-20/model_400.pt \
+    --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
     --variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
-    --train_variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
-    --base_xml /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
-    --out_dir trajectories/film_heldout \
-    --duration 10.0 --cmd_vx 0.5 --graph_encoding rwse
+    --variant_name robot_variant_4 \
+    --num_steps 500 \
+    --cmd_vx 0.5 \
+    --baseline \
+    --out traj_variant4_baseline.pkl
