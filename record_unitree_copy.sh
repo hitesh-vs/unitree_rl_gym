@@ -8,8 +8,8 @@
 #SBATCH -t 00:15:00
 #SBATCH --mem 64G
 #SBATCH --job-name="record"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_video3.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_video3.err
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_video8.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_video8.err
 
 # 1. Load basic modules
 source /etc/profile.d/modules.sh
@@ -90,12 +90,12 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 #     --out_dir trajectories/film_heldout \
 #     --duration 10.0 --cmd_vx 0.5 --graph_encoding rwse
 
-python deploy/deploy_mujoco/test_script2.py \
-    --checkpoint output_baseline_wide/Mar31_18-20-20/model_400.pt \
+# FiLM model
+python deploy/deploy_mujoco/record_traj_isaac.py \
+    --checkpoint output_film_wide/Mar31_18-18-17/model_400.pt \
     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
-    --variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
-    --variant_name robot_variant_4 \
+    --variants_metadata resources/robots/g1_ood_test_sets/damping_perturbed/variants_metadata.json \
+    --variant_name damping_perturbed_robot_0 \
     --num_steps 500 \
-    --cmd_vx 0.5 \
-    --baseline \
+    --num_eval_rollouts 10 \
     --out dummy.pkl

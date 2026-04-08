@@ -7,9 +7,9 @@
 #SBATCH --gres=gpu:L40S:1
 #SBATCH -t 23:59:00
 #SBATCH --mem 128G
-#SBATCH --job-name="base"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_debug.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_debug.err
+#SBATCH --job-name="film"
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_baseline3.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_baseline3.err
 
 # 1. Load basic modules
 source /etc/profile.d/modules.sh
@@ -60,12 +60,11 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 # 7. Execute
 python modular_policy/train_modular.py \
     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
-    --variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
+    --variants_metadata resources/robots/g1_variants_targeted/variants_metadata.json \
     --num_envs 512 \
     --headless \
-    --out_dir ./debug \
+    --out_dir ./output_baseline_targeted \
     --seed 1409 \
-    --graph_encoding rwse \
-    --film \
-    --resume output_film_wide/Mar31_18-18-17/model_400.pt \
-    --max_iters 1
+    --graph_encoding none \
+    --resume output_baseline_wide/Mar31_18-20-20/model_400.pt \
+    --max_iters 2000

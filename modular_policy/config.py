@@ -164,6 +164,6 @@ cfg.MODEL.RWSE_K = 8
 # ── MISC ──────────────────────────────────────────────────────────────────────
 cfg.OUT_DIR        = "./output_walk_isaac"
 cfg.LOG_PERIOD     = 10
-cfg.CHECKPOINT_PERIOD = 100
+cfg.CHECKPOINT_PERIOD = 50
 cfg.DEVICE         = "cuda:0"
 cfg.RNG_SEED       = 1409

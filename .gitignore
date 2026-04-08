@@ -170,3 +170,7 @@ output_*
 
 # Mesh files
 *.STL
+
+# For now
+*.json
+*.urdf

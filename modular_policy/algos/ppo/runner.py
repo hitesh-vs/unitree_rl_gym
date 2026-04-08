@@ -49,6 +49,13 @@ _SIGMA         = 0.25
 _SOFT_LIMIT    = 0.9
 _STANCE_THRESH = 0.55
 
+# FiLM generator LR multiplier applied via lr_scale every schedule step.
+# set_lr does: param_group["lr"] = new_lr * scale[i]
+# Base group:  new_lr * 1.0
+# FiLM group:  new_lr * FILM_LR_MULTIPLIER
+# This ensures the multiplier survives every LR schedule update.
+FILM_LR_MULTIPLIER = 5.0
+
 
 def _ig_quat_to_wxyz(q):
     return torch.cat([q[..., 3:4], q[..., 0:3]], dim=-1)
@@ -101,6 +108,56 @@ def _get_limb_labels(xml_path, robot_name, seq_len):
     return labels
 
 
+def _build_optimizer(actor_critic, base_lr, eps, weight_decay):
+    """
+    Build Adam with two param groups when FiLM is present.
+
+    FiLM group uses base_lr as its initial LR — the actual multiplier is
+    applied every step by set_lr via lr_scale, so it survives LR scheduling.
+
+    Returns (optimizer, has_film_params).
+    """
+    film_params  = []
+    other_params = []
+
+    for name, param in actor_critic.named_parameters():
+        if "film_generator" in name:
+            film_params.append(param)
+        else:
+            other_params.append(param)
+
+    has_film = len(film_params) > 0
+
+    if has_film:
+        param_groups = [
+            {
+                "params":       other_params,
+                "lr":           base_lr,
+                "weight_decay": weight_decay,
+            },
+            {
+                "params":       film_params,
+                "lr":           base_lr,   # set_lr scales this by FILM_LR_MULTIPLIER
+                "weight_decay": 0.0,
+            },
+        ]
+        n_film = sum(p.numel() for p in film_params)
+        print(f"[Optimizer] FiLM params: {n_film:,}  "
+              f"lr multiplier={FILM_LR_MULTIPLIER}x via lr_scale  "
+              f"(base lr={base_lr:.2e})")
+    else:
+        param_groups = [
+            {
+                "params":       other_params,
+                "lr":           base_lr,
+                "weight_decay": weight_decay,
+            },
+        ]
+        print(f"[Optimizer] No FiLM params — single group lr={base_lr:.2e}")
+
+    return optim.Adam(param_groups, eps=eps), has_film
+
+
 class ModularRunner:
     """
     PPO runner. Supports single and multi-variant training.
@@ -117,7 +174,7 @@ class ModularRunner:
                  variants_metadata_path=None):
         print("[ModularRunner] Starting __init__...", flush=True)
         self.env      = env
-        self.xml_path = xml_path   # base stripped XML — stored for t-SNE
+        self.xml_path = xml_path
         self.device   = torch.device(device)
         self.log_dir  = log_dir
         self.writer   = None
@@ -133,11 +190,9 @@ class ModularRunner:
         if self.multi_variant:
             with open(variants_metadata_path) as f:
                 meta = json.load(f)
-            # Handle nested format from new generator
             if "variants" in meta:
                 meta = meta["variants"]
 
-            # Force xml to base stripped XML for all variants
             for name in meta:
                 meta[name]["xml"] = xml_path
 
@@ -145,18 +200,14 @@ class ModularRunner:
             self.variant_meta  = list(meta.values())
             self.num_variants  = len(self.variant_names)
 
-            # xml  = stripped MuJoCo XML — graph topology (same for all variants)
-            # urdf = variant URDF — actual kinematics/mass (different per variant)
             xml_paths  = [m["xml"]  for m in self.variant_meta]
             urdf_paths = [m["urdf"] for m in self.variant_meta]
 
-            # Per-env base_height_target (N,)
             bht_per_variant = torch.tensor(
                 [m["base_height_target"] for m in self.variant_meta],
                 dtype=torch.float32, device=self.device)
             self.base_height = bht_per_variant[env.env_variant_ids]
 
-            # Per-env feet clearance target
             fct_per_variant = torch.tensor(
                 [m.get("feet_clearance_target", 0.08) for m in self.variant_meta],
                 dtype=torch.float32, device=self.device)
@@ -196,9 +247,6 @@ class ModularRunner:
         self._resample_commands(torch.arange(self.num_envs, device=self.device))
 
         # ── FiLM diagnostic cache ─────────────────────────────────────────
-        # Populated at the end of each rollout; read by _log.
-        # Shape when set: (max_limbs, num_envs, 12) — same layout as
-        # obs_context after the reshape/permute in ActorCritic.forward.
         self._last_obs_ctx = None
 
         # ── DOF limits ───────────────────────────────────────────────────
@@ -224,11 +272,21 @@ class ModularRunner:
         self.buffer.to(self.device)
 
         # ── Optimizer ─────────────────────────────────────────────────────
-        self.optimizer = optim.Adam(
-            self.actor_critic.parameters(),
-            lr=cfg.PPO.BASE_LR, eps=cfg.PPO.EPS,
-            weight_decay=cfg.PPO.WEIGHT_DECAY)
-        self.lr_scale = [1.0]
+        # Two param groups when FiLM is present:
+        #   group 0 (base):  lr = new_lr * 1.0
+        #   group 1 (FiLM):  lr = new_lr * FILM_LR_MULTIPLIER
+        # lr_scale carries the per-group multiplier so set_lr applies it
+        # correctly on every schedule update.
+        self.optimizer, self._has_film_params = _build_optimizer(
+            self.actor_critic,
+            base_lr      = cfg.PPO.BASE_LR,
+            eps          = cfg.PPO.EPS,
+            weight_decay = cfg.PPO.WEIGHT_DECAY,
+        )
+        if self._has_film_params:
+            self.lr_scale = [1.0, FILM_LR_MULTIPLIER]
+        else:
+            self.lr_scale = [1.0]
 
         # ── Metrics ───────────────────────────────────────────────────────
         self.train_meter   = TrainMeter(self.variant_names)
@@ -304,9 +362,7 @@ class ModularRunner:
                     dmv, dmmu, unimal_ids)
                 obs = obs_next
 
-            # Cache obs_ctx for FiLM diagnostics in _log.
-            # obs["context"] is (N, max_limbs * 12); reshape to (L, N, 12)
-            # which is the same layout TransformerModel.forward receives.
+            # Cache obs_ctx for FiLM diagnostics in _log
             self._last_obs_ctx = (
                 obs["context"]
                 .reshape(self.num_envs, self.obs_builder.max_limbs, -1)
@@ -338,7 +394,6 @@ class ModularRunner:
             if cur_iter % cfg.CHECKPOINT_PERIOD == 0:
                 self.save(cur_iter)
 
-            # Collect t-SNE embeddings every 10 iters
             TSNE_PERIOD = 10
             if cur_iter % TSNE_PERIOD == 0:
                 xml_paths_for_tsne = (
@@ -375,7 +430,15 @@ class ModularRunner:
     def load(self, path):
         ckpt = torch.load(path, map_location=self.device)
         self.actor_critic.load_state_dict(ckpt["model_state_dict"])
-        self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+
+        # Optimizer state — tolerate param group count mismatch.
+        # This happens when loading a single-group checkpoint (no FiLM) into
+        # a two-group run (with FiLM), or vice versa.
+        try:
+            self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        except ValueError as e:
+            print(f"[ModularRunner] Skipping optimizer state load "
+                  f"(param group mismatch — expected when adding FiLM): {e}")
 
         if "ob_mean" in ckpt:
             saved_mean  = ckpt["ob_mean"]
@@ -384,30 +447,24 @@ class ModularRunner:
             saved_multi = ckpt.get("multi_variant", False)
 
             if saved_multi == self.multi_variant:
-                # Same mode — load directly
                 self.ob_mean  = saved_mean.to(self.device)
                 self.ob_var   = saved_var.to(self.device)
                 self.ob_count = (saved_count.to(self.device)
                                 if torch.is_tensor(saved_count)
                                 else saved_count)
             elif not saved_multi and self.multi_variant:
-                # Resuming from single-variant checkpoint into multi-variant
-                # Broadcast single (338,) stats to all variants (V, 338)
                 print(f"[ModularRunner] Converting single-variant obs stats "
                     f"to {self.num_variants}-variant stats", flush=True)
                 self.ob_mean  = saved_mean.to(self.device).unsqueeze(0).expand(
                     self.num_variants, -1).clone()
                 self.ob_var   = saved_var.to(self.device).unsqueeze(0).expand(
                     self.num_variants, -1).clone()
-                # Each variant starts with the full single-variant count
-                # so it doesn't get swamped by early multi-variant updates
                 self.ob_count = torch.full(
                     (self.num_variants,),
                     float(saved_count) if not torch.is_tensor(saved_count)
                     else float(saved_count.mean()),
                     device=self.device)
             elif saved_multi and not self.multi_variant:
-                # Resuming from multi-variant into single-variant — take variant 0
                 print(f"[ModularRunner] Taking variant 0 obs stats "
                     f"for single-variant run", flush=True)
                 self.ob_mean  = saved_mean[0].to(self.device)
@@ -707,10 +764,10 @@ class ModularRunner:
         self.commands[env_ids[small], :2] = 0.
 
     def _normalize_obs(self, obs):
-        prop = obs["proprioceptive"]   # (N, 338)
+        prop = obs["proprioceptive"]
 
         if self.multi_variant:
-            vid = self.env.env_variant_ids   # (N,)
+            vid = self.env.env_variant_ids
             for v in range(self.num_variants):
                 mask = (vid == v)
                 if mask.sum() == 0:
@@ -766,8 +823,11 @@ class ModularRunner:
         if self.writer:
             self.writer.add_scalar("Perf/fps",       fps, cur_iter)
             self.writer.add_scalar("Perf/timesteps", self.tot_timesteps, cur_iter)
-            self.writer.add_scalar("Train/lr",
-                self.optimizer.param_groups[0]["lr"], cur_iter)
+
+            # Log LR per group
+            for i, pg in enumerate(self.optimizer.param_groups):
+                label = "film" if (self._has_film_params and i == 1) else "base"
+                self.writer.add_scalar(f"Train/lr_{label}", pg["lr"], cur_iter)
 
             all_returns = []
             for name, meter in self.train_meter.agent_meters.items():
@@ -784,31 +844,26 @@ class ModularRunner:
                                            float(np.mean(meter.ep_len)), cur_iter)
 
             # ── FiLM diagnostics ──────────────────────────────────────────
-            # film_generator is None when USE_FILM=False, so this whole
-            # block is a no-op in non-FiLM runs.
             fg = self.actor_critic.mu_net.film_generator
             if fg is not None and self._last_obs_ctx is not None:
                 with torch.no_grad():
                     gamma, beta = fg(self._last_obs_ctx)
-                    # gamma, beta: (max_limbs, num_envs, d_model)
 
-                    # Global activation check — should grow from ~0 early in training
                     self.writer.add_scalar(
                         "FiLM/gamma_std",  gamma.std().item(),  cur_iter)
                     self.writer.add_scalar(
                         "FiLM/gamma_mean", gamma.mean().item(), cur_iter)
                     self.writer.add_scalar(
+                        "FiLM/gamma_min",  gamma.min().item(),  cur_iter)
+                    self.writer.add_scalar(
+                        "FiLM/gamma_max",  gamma.max().item(),  cur_iter)
+                    self.writer.add_scalar(
                         "FiLM/beta_std",   beta.std().item(),   cur_iter)
                     self.writer.add_scalar(
                         "FiLM/beta_mean",  beta.mean().item(),  cur_iter)
 
-                    # Per-limb discrimination: std across the batch dimension
-                    # for each limb, then averaged over d_model.
-                    # High value = generator is producing different gamma/beta
-                    # per environment (i.e. it's actually using the context).
-                    # Low value = generator ignores context, outputs constant.
-                    limb_gamma_std = gamma.std(dim=1).mean(dim=-1)  # (max_limbs,)
-                    limb_beta_std  = beta.std(dim=1).mean(dim=-1)   # (max_limbs,)
+                    limb_gamma_std = gamma.std(dim=1).mean(dim=-1)
+                    limb_beta_std  = beta.std(dim=1).mean(dim=-1)
                     self.writer.add_scalar(
                         "FiLM/limb_gamma_std_mean",
                         limb_gamma_std.mean().item(), cur_iter)
@@ -816,11 +871,18 @@ class ModularRunner:
                         "FiLM/limb_beta_std_mean",
                         limb_beta_std.mean().item(),  cur_iter)
 
-                    # Inter-limb discrimination: std of per-limb mean gamma
-                    # across limb positions. High value = different limb types
-                    # receive meaningfully different scaling — the core goal.
-                    limb_gamma_mean = gamma.mean(dim=1)              # (max_limbs, d_model)
+                    limb_gamma_mean = gamma.mean(dim=1)
                     inter_limb_std  = limb_gamma_mean.std(dim=0).mean()
                     self.writer.add_scalar(
                         "FiLM/inter_limb_gamma_std",
                         inter_limb_std.item(), cur_iter)
+
+                    # Gradient norm through FiLM generator
+                    film_grad_norm = sum(
+                        p.grad.norm().item() ** 2
+                        for p in fg.parameters()
+                        if p.grad is not None
+                    ) ** 0.5
+                    self.writer.add_scalar(
+                        "FiLM/generator_grad_norm",
+                        film_grad_norm, cur_iter)
