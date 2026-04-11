@@ -26,9 +26,20 @@ Structure:
 Usage:
     python generate_ood_test_sets.py \
         --base_urdf resources/robots/g1_description/g1_12dof.urdf \
-        --out_dir   resources/robots/g1_ood_test_sets \
+        --ref_json  resources/robots/g1_variants_targeted/targeted_variant_2_changes.json \
+        --out_dir   resources/robots/g1_ood_test_sets2 \
         --base_xml  /path/to/g1_12dof_stripped.xml \
         --seed 7777
+
+Expected ref JSON structure:
+    {
+        "group_mass_scale":   { "left_leg": ..., "right_leg": ..., "torso": ... },
+        "group_length_scale": { "left_leg": ..., "right_leg": ... },
+        "joint_range_scale":  { "<joint_name>": ..., ... },
+        "joint_effort_scale": { "<joint_name>": ..., ... },
+        "joint_damping":      { "<joint_name>": ..., ... },
+        "joint_armature":     { "<joint_name>": ..., ... }
+    }
 """
 
 import os
@@ -39,76 +50,6 @@ import argparse
 import numpy as np
 import xml.etree.ElementTree as ET
 
-# ── Reference robot (variant_4 exact values) ──────────────────────────────────
-REF = {
-    "group_mass_scale": {
-        "left_leg":  2.4835025360951875,
-        "right_leg": 1.6000728820255103,
-        "torso":     2.0814278484525035,
-    },
-    "group_length_scale": {
-        "left_leg":  1.077522864531428,
-        "right_leg": 1.0984346273702927,
-    },
-    "joint_range_scale": {
-        "left_hip_pitch_joint":   0.6061384407479627,
-        "left_hip_roll_joint":    0.7741672315213531,
-        "left_hip_yaw_joint":     1.3110361943770594,
-        "left_knee_joint":        0.9775329749627818,
-        "left_ankle_pitch_joint": 0.9464613494011289,
-        "left_ankle_roll_joint":  0.8807195995361908,
-        "right_hip_pitch_joint":  1.3625673698628944,
-        "right_hip_roll_joint":   1.1937585886195134,
-        "right_hip_yaw_joint":    1.0090226823631436,
-        "right_knee_joint":       0.6328122788301298,
-        "right_ankle_pitch_joint":0.7653264323665646,
-        "right_ankle_roll_joint": 0.6342248021411608,
-    },
-    "joint_effort_scale": {
-        "left_hip_pitch_joint":   0.5547846830743501,
-        "left_hip_roll_joint":    0.8629187299302165,
-        "left_hip_yaw_joint":     0.9896742737581692,
-        "left_knee_joint":        1.2766323061344513,
-        "left_ankle_pitch_joint": 0.7177725032453276,
-        "left_ankle_roll_joint":  1.4003009545989258,
-        "right_hip_pitch_joint":  1.1663346907727343,
-        "right_hip_roll_joint":   1.1363958146175,
-        "right_hip_yaw_joint":    1.4292581394511714,
-        "right_knee_joint":       1.058537792313742,
-        "right_ankle_pitch_joint":0.9546571572190169,
-        "right_ankle_roll_joint": 0.5066842598724905,
-    },
-    # Damping stored as absolute values (not scales)
-    "joint_damping": {
-        "left_hip_pitch_joint":   0.001933088634763863,
-        "left_hip_roll_joint":    0.0008747039222372677,
-        "left_hip_yaw_joint":     0.0019001609092168296,
-        "left_knee_joint":        0.0005658530027552562,
-        "left_ankle_pitch_joint": 0.001389883706423467,
-        "left_ankle_roll_joint":  0.0014429479725339438,
-        "right_hip_pitch_joint":  0.0004225353663996092,
-        "right_hip_roll_joint":   0.0012773999876451838,
-        "right_hip_yaw_joint":    0.0008937097199938902,
-        "right_knee_joint":       0.0006244201067998018,
-        "right_ankle_pitch_joint":0.0017309959357643102,
-        "right_ankle_roll_joint": 0.0006375177539872832,
-    },
-    # Armature stored as absolute values
-    "joint_armature": {
-        "left_hip_pitch_joint":   0.005636648873676784,
-        "left_hip_roll_joint":    0.005977165743002878,
-        "left_hip_yaw_joint":     0.011936588690863429,
-        "left_knee_joint":        0.015425784482066534,
-        "left_ankle_pitch_joint": 0.01222652482782646,
-        "left_ankle_roll_joint":  0.01268820592965347,
-        "right_hip_pitch_joint":  0.01704883148732383,
-        "right_hip_roll_joint":   0.012234217991781425,
-        "right_hip_yaw_joint":    0.01367750035034886,
-        "right_knee_joint":       0.006734130292720781,
-        "right_ankle_pitch_joint":0.006183394619880478,
-        "right_ankle_roll_joint": 0.01219995425665799,
-    },
-}
 
 LEFT_LEG_LINKS  = {
     "left_hip_pitch_link", "left_hip_roll_link", "left_hip_yaw_link",
@@ -119,8 +60,33 @@ RIGHT_LEG_LINKS = {
     "right_knee_link", "right_ankle_pitch_link", "right_ankle_roll_link",
 }
 TORSO_LINKS     = {"pelvis"}
-ACTUATED_JOINTS = set(REF["joint_range_scale"].keys())
 BASE_HEIGHT     = 0.78
+
+
+def load_ref(ref_json_path):
+    """Load and validate the reference robot JSON."""
+    with open(ref_json_path) as f:
+        ref = json.load(f)
+
+    required_keys = {
+        "group_mass_scale", "joint_range_scale",
+        "joint_effort_scale", "joint_damping", "joint_armature",
+    }
+    missing = required_keys - set(ref.keys())
+    if missing:
+        raise ValueError(
+            f"Reference JSON is missing required keys: {missing}\n"
+            f"Found keys: {set(ref.keys())}"
+        )
+
+    required_mass_groups = {"left_leg", "right_leg", "torso"}
+    missing_groups = required_mass_groups - set(ref["group_mass_scale"].keys())
+    if missing_groups:
+        raise ValueError(
+            f"group_mass_scale is missing groups: {missing_groups}"
+        )
+
+    return ref
 
 
 def perturb(val, rng, pct=0.10):
@@ -145,7 +111,8 @@ def indent(elem, level=0):
 
 
 def apply_full_variant(base_root, mass_scales, range_scales,
-                        effort_scales, damping_vals, armature_vals):
+                        effort_scales, damping_vals, armature_vals,
+                        actuated_joints):
     """
     Apply a complete set of property values to the base URDF.
     All values are absolute (not relative to base URDF).
@@ -187,7 +154,7 @@ def apply_full_variant(base_root, mass_scales, range_scales,
     child_to_arm = {}
     for joint in root.iter("joint"):
         jname = joint.attrib.get("name", "")
-        if jname not in ACTUATED_JOINTS:
+        if jname not in actuated_joints:
             continue
 
         # Range
@@ -313,19 +280,19 @@ def save_set(set_name, robots, base_urdf_path, base_xml,
     return meta_path
 
 
-def make_robot(rng, perturb_prop, pct=0.10):
+def make_robot(rng, ref, perturb_prop, pct=0.10):
     """
     Make one robot by perturbing ONLY perturb_prop of the reference robot.
-    All other properties are taken EXACTLY from REF.
+    All other properties are taken EXACTLY from ref.
     perturb_prop: one of 'mass', 'damping', 'armature',
                          'joint_range', 'effort', 'all'
     """
     # Start from reference values exactly
-    mass_scales   = copy.deepcopy(REF["group_mass_scale"])
-    range_scales  = copy.deepcopy(REF["joint_range_scale"])
-    effort_scales = copy.deepcopy(REF["joint_effort_scale"])
-    damping_vals  = copy.deepcopy(REF["joint_damping"])
-    armature_vals = copy.deepcopy(REF["joint_armature"])
+    mass_scales   = copy.deepcopy(ref["group_mass_scale"])
+    range_scales  = copy.deepcopy(ref["joint_range_scale"])
+    effort_scales = copy.deepcopy(ref["joint_effort_scale"])
+    damping_vals  = copy.deepcopy(ref["joint_damping"])
+    armature_vals = copy.deepcopy(ref["joint_armature"])
 
     if perturb_prop in ("mass", "all"):
         for k in mass_scales:
@@ -348,8 +315,8 @@ def make_robot(rng, perturb_prop, pct=0.10):
             armature_vals[k] = perturb(armature_vals[k], rng, pct)
 
     changes = {
-        "reference":       "variant_4",
-        "perturbed_prop":  perturb_prop,
+        "reference":        "custom_ref",
+        "perturbed_prop":   perturb_prop,
         "perturbation_pct": pct,
         "group_mass_scale":   mass_scales,
         "joint_range_scale":  range_scales,
@@ -363,14 +330,25 @@ def make_robot(rng, perturb_prop, pct=0.10):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base_urdf",    required=True)
-    parser.add_argument("--out_dir",      default="resources/robots/g1_ood_test_sets")
-    parser.add_argument("--base_xml",     default="")
-    parser.add_argument("--seed",         type=int,   default=7777)
-    parser.add_argument("--num_per_set",  type=int,   default=5)
-    parser.add_argument("--perturb_pct",  type=float, default=0.10,
+    parser.add_argument("--base_urdf",   required=True,
+                        help="Path to the base URDF file.")
+    parser.add_argument("--ref_json",    required=True,
+                        help="Path to the reference robot JSON file.")
+    parser.add_argument("--out_dir",     default="resources/robots/g1_ood_test_sets",
+                        help="Output directory for generated test sets.")
+    parser.add_argument("--base_xml",    default="",
+                        help="Path to the base MuJoCo XML (stripped), stored in metadata.")
+    parser.add_argument("--seed",        type=int,   default=7777)
+    parser.add_argument("--num_per_set", type=int,   default=5,
+                        help="Number of robots to generate per set.")
+    parser.add_argument("--perturb_pct", type=float, default=0.10,
                         help="Perturbation percentage (default 10%%)")
     args = parser.parse_args()
+
+    # ── Load reference robot ──────────────────────────────────────────────
+    print(f"Loading reference robot from: {args.ref_json}")
+    ref = load_ref(args.ref_json)
+    actuated_joints = set(ref["joint_range_scale"].keys())
 
     os.makedirs(args.out_dir, exist_ok=True)
     rng = np.random.default_rng(args.seed)
@@ -395,9 +373,10 @@ def main():
         base_leg_z = 0.1027 + 0.17734 + 0.30001 + 0.017558
 
     print(f"\n{'='*65}")
-    print(f"Generating 6 OOD test sets — slight perturbations of variant_4")
-    print(f"Perturbation: ±{PCT*100:.0f}% on varied property only")
-    print(f"All other properties: EXACT variant_4 values")
+    print(f"Generating 6 OOD test sets — slight perturbations of ref robot")
+    print(f"Reference JSON: {args.ref_json}")
+    print(f"Perturbation:   ±{PCT*100:.0f}% on varied property only")
+    print(f"All other properties: EXACT reference values")
     print(f"Output: {args.out_dir}/")
     print(f"{'='*65}\n")
 
@@ -410,49 +389,51 @@ def main():
         ("all_perturbed",         "all"),
     ]
 
+    ref_avg_mass    = np.mean(list(ref["group_mass_scale"].values()))
+    ref_avg_damping = np.mean(list(ref["joint_damping"].values()))
+    ref_avg_effort  = np.mean(list(ref["joint_effort_scale"].values()))
+    ref_avg_range   = np.mean(list(ref["joint_range_scale"].values()))
+    ref_avg_arm     = np.mean(list(ref["joint_armature"].values()))
+
     for set_name, prop in sets:
         print(f"SET: {set_name}  (perturbing '{prop}' by ±{PCT*100:.0f}%)")
         robots = []
         for i in range(N):
-            ms, rs, es, dv, av, changes = make_robot(rng, prop, PCT)
-            vroot = apply_full_variant(base_root, ms, rs, es, dv, av)
+            ms, rs, es, dv, av, changes = make_robot(rng, ref, prop, PCT)
+            vroot = apply_full_variant(base_root, ms, rs, es, dv, av, actuated_joints)
             robots.append((vroot, changes))
 
             # Print summary for this robot
             if prop == "mass":
                 print(f"  robot_{i}: left_mass={ms['left_leg']:.3f}x  "
                       f"right_mass={ms['right_leg']:.3f}x  "
-                      f"(ref: 2.484x / 1.600x)")
+                      f"(ref avg: {ref_avg_mass:.3f}x)")
             elif prop == "damping":
                 avg_d = np.mean(list(dv.values()))
-                ref_d = np.mean(list(REF["joint_damping"].values()))
                 print(f"  robot_{i}: avg_damping={avg_d:.5f}  "
-                      f"(ref: {ref_d:.5f})")
+                      f"(ref: {ref_avg_damping:.5f})")
             elif prop == "effort":
                 avg_e = np.mean(list(es.values()))
-                ref_e = np.mean(list(REF["joint_effort_scale"].values()))
                 print(f"  robot_{i}: avg_effort={avg_e:.3f}x  "
-                      f"(ref: {ref_e:.3f}x)")
+                      f"(ref: {ref_avg_effort:.3f}x)")
             elif prop == "joint_range":
                 avg_r = np.mean(list(rs.values()))
-                ref_r = np.mean(list(REF["joint_range_scale"].values()))
                 print(f"  robot_{i}: avg_range={avg_r:.3f}x  "
-                      f"(ref: {ref_r:.3f}x)")
+                      f"(ref: {ref_avg_range:.3f}x)")
             elif prop == "armature":
                 avg_a = np.mean(list(av.values()))
-                ref_a = np.mean(list(REF["joint_armature"].values()))
                 print(f"  robot_{i}: avg_armature={avg_a:.5f}  "
-                      f"(ref: {ref_a:.5f})")
+                      f"(ref: {ref_avg_arm:.5f})")
             elif prop == "all":
-                print(f"  robot_{i}: all props ±{PCT*100:.0f}% from variant_4")
+                print(f"  robot_{i}: all props ±{PCT*100:.0f}% from ref")
 
         save_set(set_name, robots, args.base_urdf, args.base_xml,
                  base_leg_z, args.out_dir, base_root)
 
     print(f"\n{'='*65}")
     print(f"Done. {6 * N} robots generated across 6 sets.")
-    print(f"\nKey property: These robots are variant_4 ± {PCT*100:.0f}%")
-    print(f"Policy saw variant_4 during training → should generalize here")
+    print(f"\nKey property: These robots are ref ± {PCT*100:.0f}%")
+    print(f"Policy saw reference robot during training → should generalize")
     print(f"\nEval example:")
     print(f"  python record_traj_isaac.py \\")
     print(f"    --checkpoint output_film_wide/.../model_400.pt \\")

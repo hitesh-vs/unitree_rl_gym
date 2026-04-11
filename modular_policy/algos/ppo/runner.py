@@ -763,35 +763,38 @@ class ModularRunner:
         small = self.commands[env_ids, :2].norm(dim=1) < .2
         self.commands[env_ids[small], :2] = 0.
 
-    def _normalize_obs(self, obs):
+    def _normalize_obs(self, obs, update_stats=True):
         prop = obs["proprioceptive"]
 
         if self.multi_variant:
-            vid = self.env.env_variant_ids
+            vid = self.env.env_variant_ids  # ← was self.env_variant_ids
             for v in range(self.num_variants):
                 mask = (vid == v)
                 if mask.sum() == 0:
                     continue
-                p   = prop[mask]
-                bm  = p.mean(0); bv = p.var(0); bc = p.shape[0]
-                d   = bm - self.ob_mean[v]
-                tot = self.ob_count[v] + bc
-                self.ob_mean[v]  = self.ob_mean[v] + d * bc / tot
-                self.ob_var[v]   = (self.ob_var[v] * self.ob_count[v] + bv * bc +
-                                    d.pow(2) * self.ob_count[v] * bc / tot) / tot
-                self.ob_count[v] = tot
+                p = prop[mask]
+                if update_stats:
+                    bm  = p.mean(0); bv = p.var(0); bc = p.shape[0]
+                    d   = bm - self.ob_mean[v]
+                    tot = self.ob_count[v] + bc
+                    self.ob_mean[v]  = self.ob_mean[v] + d * bc / tot
+                    self.ob_var[v]   = (self.ob_var[v] * self.ob_count[v] + bv * bc +
+                                        d.pow(2) * self.ob_count[v] * bc / tot) / tot
+                    self.ob_count[v] = tot
                 prop[mask] = (
                     (p - self.ob_mean[v]) / (self.ob_var[v] + 1e-8).sqrt()
                 ).clamp(-self.clipob, self.clipob)
         else:
-            bm  = prop.mean(0); bv = prop.var(0); bc = prop.shape[0]
-            d   = bm - self.ob_mean
-            tot = self.ob_count + bc
-            self.ob_mean  = self.ob_mean + d * bc / tot
-            self.ob_var   = (self.ob_var * self.ob_count + bv * bc +
-                            d.pow(2) * self.ob_count * bc / tot) / tot
-            self.ob_count = tot
-            prop = ((prop - self.ob_mean) /
+            p = prop
+            if update_stats:
+                bm  = p.mean(0); bv = p.var(0); bc = p.shape[0]
+                d   = bm - self.ob_mean
+                tot = self.ob_count + bc
+                self.ob_mean  = self.ob_mean + d * bc / tot
+                self.ob_var   = (self.ob_var * self.ob_count + bv * bc +
+                                d.pow(2) * self.ob_count * bc / tot) / tot
+                self.ob_count = tot
+            prop = ((p - self.ob_mean) /
                     (self.ob_var + 1e-8).sqrt()).clamp(-self.clipob, self.clipob)
 
         obs["proprioceptive"] = prop

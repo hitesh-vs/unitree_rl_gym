@@ -392,6 +392,7 @@ class ObsBuilder:
         self.max_limbs   = cfg.MODEL.MAX_LIMBS
         self.max_joints  = cfg.MODEL.MAX_JOINTS
         self.graph_enc   = cfg.MODEL.GRAPH_ENCODING
+        self.context_noise = cfg.MODEL.CONTEXT_NOISE
 
         use_ltv = False
         self.use_ltv       = use_ltv
@@ -553,7 +554,10 @@ class ObsBuilder:
         joint_lo   = self.joint_lo_stacked[vid]
         joint_span = self.joint_span_stacked[vid]
         jrange     = self.jrange_stacked[vid]
-        ctx        = self.contexts_stacked[vid]
+        ctx = self.contexts_stacked[vid]
+        if self.context_noise > 0.0:
+            noise = torch.randn_like(ctx) * self.context_noise * ctx.abs()
+            ctx   = (ctx + noise).clamp(-1., 1.)
         edges      = self.edges_stacked[vid]
         trav       = self.traversals_stacked[vid]
         swat_re    = self.swat_re_stacked[vid]

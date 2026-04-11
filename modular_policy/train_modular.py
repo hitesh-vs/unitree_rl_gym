@@ -49,6 +49,8 @@ def parse_args():
                choices=["none", "onehot", "topological", "rwse"])
     p.add_argument("--film", action="store_true", default=False,
                    help="Enable FiLM morphology conditioning on per-limb embeddings")
+    p.add_argument("--context_noise", type=float, default=0.0,
+               help="Fractional noise on context vector (e.g. 0.05 = 5%)")
     return p.parse_args()
 
 
@@ -69,6 +71,7 @@ def main():
     cfg.PPO.EARLY_EXIT_MAX_ITERS = args.max_iters
     cfg.MODEL.GRAPH_ENCODING     = args.graph_encoding
     cfg.MODEL.TRANSFORMER.USE_FILM = args.film
+    cfg.MODEL.CONTEXT_NOISE = args.context_noise
     cfg.DEVICE                   = args.rl_device
     cfg.OUT_DIR                  = args.out_dir
 

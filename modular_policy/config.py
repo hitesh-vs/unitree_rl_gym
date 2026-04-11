@@ -161,6 +161,9 @@ cfg.TASK_SAMPLING = _Namespace(
 # RWSE params
 cfg.MODEL.RWSE_K = 8
 
+# after cfg.MODEL.RWSE_K = 8
+cfg.MODEL.CONTEXT_NOISE = 0.0   # noise std fraction, 0 = disabled
+
 # ── MISC ──────────────────────────────────────────────────────────────────────
 cfg.OUT_DIR        = "./output_walk_isaac"
 cfg.LOG_PERIOD     = 10
