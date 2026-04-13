@@ -294,13 +294,14 @@ class ModularRunner:
         self.tot_timesteps = 0
         self.resume_iter   = 0
 
-        # Obs normalisation (Welford)
+        # Obs normalisation (Welford) — single shared normalizer across all variants.
+        # Per-variant normalization removes the very distributional differences
+        # the context vector is meant to encode, and breaks OOD generalization.
         prop_dim      = cfg.MODEL.MAX_LIMBS * self.obs_builder.limb_obs_size
-        self.ob_mean  = torch.zeros(self.num_variants, prop_dim, device=self.device)
-        self.ob_var   = torch.ones(self.num_variants, prop_dim, device=self.device)
-        self.ob_count = torch.full((self.num_variants,), 1e-4, device=self.device)
+        self.ob_mean  = torch.zeros(prop_dim, device=self.device)
+        self.ob_var   = torch.ones(prop_dim, device=self.device)
+        self.ob_count = torch.tensor(1e-4, device=self.device)
         self.clipob   = 10.0
-
         print("[ModularRunner] Init complete.", flush=True)
 
     # ─────────────────────────────────────────────────────────────────────
@@ -420,8 +421,7 @@ class ModularRunner:
                 "iter":       cur_iter,
                 "ob_mean":    self.ob_mean.cpu(),
                 "ob_var":     self.ob_var.cpu(),
-                "ob_count":   self.ob_count.cpu() if torch.is_tensor(self.ob_count)
-                            else self.ob_count,
+                "ob_count":   self.ob_count.cpu(),
                 "multi_variant": self.multi_variant,
                 "num_variants":  self.num_variants,
             }, path)
@@ -444,34 +444,22 @@ class ModularRunner:
             saved_mean  = ckpt["ob_mean"]
             saved_var   = ckpt["ob_var"]
             saved_count = ckpt["ob_count"]
-            saved_multi = ckpt.get("multi_variant", False)
 
-            if saved_multi == self.multi_variant:
-                self.ob_mean  = saved_mean.to(self.device)
-                self.ob_var   = saved_var.to(self.device)
-                self.ob_count = (saved_count.to(self.device)
-                                if torch.is_tensor(saved_count)
-                                else saved_count)
-            elif not saved_multi and self.multi_variant:
-                print(f"[ModularRunner] Converting single-variant obs stats "
-                    f"to {self.num_variants}-variant stats", flush=True)
-                self.ob_mean  = saved_mean.to(self.device).unsqueeze(0).expand(
-                    self.num_variants, -1).clone()
-                self.ob_var   = saved_var.to(self.device).unsqueeze(0).expand(
-                    self.num_variants, -1).clone()
-                self.ob_count = torch.full(
-                    (self.num_variants,),
-                    float(saved_count) if not torch.is_tensor(saved_count)
-                    else float(saved_count.mean()),
-                    device=self.device)
-            elif saved_multi and not self.multi_variant:
-                print(f"[ModularRunner] Taking variant 0 obs stats "
-                    f"for single-variant run", flush=True)
-                self.ob_mean  = saved_mean[0].to(self.device)
-                self.ob_var   = saved_var[0].to(self.device)
-                self.ob_count = (float(saved_count[0])
-                                if torch.is_tensor(saved_count)
-                                else saved_count)
+            # Handle checkpoints saved with old per-variant normalizer
+            # shape (num_variants, prop_dim) — collapse to shared by averaging.
+            if saved_mean.dim() == 2:
+                print(f"[ModularRunner] Converting per-variant obs stats "
+                      f"(shape {saved_mean.shape}) to shared normalizer "
+                      f"by averaging across variants.", flush=True)
+                saved_mean  = saved_mean.mean(0)
+                saved_var   = saved_var.mean(0)
+                saved_count = (saved_count.mean()
+                               if torch.is_tensor(saved_count)
+                               else torch.tensor(float(saved_count)))
+
+            self.ob_mean  = saved_mean.to(self.device)
+            self.ob_var   = saved_var.to(self.device)
+            self.ob_count = saved_count.to(self.device)
 
         self.resume_iter = ckpt.get("iter", 0)
         print(f"[ModularRunner] Loaded: {path}  (iter={self.resume_iter})")
@@ -578,13 +566,13 @@ class ModularRunner:
 
         return obs, rewards, dones, infos
 
-    def _get_obs_normalized(self):
+    def _get_obs_normalized(self, update_stats=True):
         self.env.gym.refresh_actor_root_state_tensor(self.env.sim)
         self.env.gym.refresh_dof_state_tensor(self.env.sim)
         self.env.gym.refresh_rigid_body_state_tensor(self.env.sim)
         obs, _, _ = self.obs_builder.build(
             self.commands, self.episode_steps, self.last_actions, self.dt)
-        return self._normalize_obs(obs)
+        return self._normalize_obs(obs, update_stats=update_stats)
 
     # ─────────────────────────────────────────────────────────────────────
     # Rewards
@@ -766,38 +754,22 @@ class ModularRunner:
     def _normalize_obs(self, obs, update_stats=True):
         prop = obs["proprioceptive"]
 
-        if self.multi_variant:
-            vid = self.env.env_variant_ids  # ← was self.env_variant_ids
-            for v in range(self.num_variants):
-                mask = (vid == v)
-                if mask.sum() == 0:
-                    continue
-                p = prop[mask]
-                if update_stats:
-                    bm  = p.mean(0); bv = p.var(0); bc = p.shape[0]
-                    d   = bm - self.ob_mean[v]
-                    tot = self.ob_count[v] + bc
-                    self.ob_mean[v]  = self.ob_mean[v] + d * bc / tot
-                    self.ob_var[v]   = (self.ob_var[v] * self.ob_count[v] + bv * bc +
-                                        d.pow(2) * self.ob_count[v] * bc / tot) / tot
-                    self.ob_count[v] = tot
-                prop[mask] = (
-                    (p - self.ob_mean[v]) / (self.ob_var[v] + 1e-8).sqrt()
-                ).clamp(-self.clipob, self.clipob)
-        else:
-            p = prop
-            if update_stats:
-                bm  = p.mean(0); bv = p.var(0); bc = p.shape[0]
-                d   = bm - self.ob_mean
-                tot = self.ob_count + bc
-                self.ob_mean  = self.ob_mean + d * bc / tot
-                self.ob_var   = (self.ob_var * self.ob_count + bv * bc +
-                                d.pow(2) * self.ob_count * bc / tot) / tot
-                self.ob_count = tot
-            prop = ((p - self.ob_mean) /
-                    (self.ob_var + 1e-8).sqrt()).clamp(-self.clipob, self.clipob)
+        if update_stats:
+            bm  = prop.mean(0)
+            bv  = prop.var(0)
+            bc  = torch.tensor(prop.shape[0], dtype=torch.float32,
+                               device=self.device)
+            d   = bm - self.ob_mean
+            tot = self.ob_count + bc
+            self.ob_mean  = self.ob_mean + d * bc / tot
+            self.ob_var   = (self.ob_var * self.ob_count + bv * bc +
+                             d.pow(2) * self.ob_count * bc / tot) / tot
+            self.ob_count = tot
 
-        obs["proprioceptive"] = prop
+        obs["proprioceptive"] = (
+            (prop - self.ob_mean) / (self.ob_var + 1e-8).sqrt()
+        ).clamp(-self.clipob, self.clipob)
+
         return obs
 
     def _build_infos(self, dones):

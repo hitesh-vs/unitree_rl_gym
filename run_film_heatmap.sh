@@ -7,9 +7,9 @@
 #SBATCH --gres=gpu:L40S:1
 #SBATCH -t 23:59:00
 #SBATCH --mem 128G
-#SBATCH --job-name="film"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_film_finetune.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_film_finetune.err
+#SBATCH --job-name="heatmap"
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/out_heatmap.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_heatmap.err
 
 # 1. Load basic modules
 source /etc/profile.d/modules.sh
@@ -58,14 +58,8 @@ source /home/sviswasam/dr/unitree_env/bin/activate
 export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 
 # 7. Execute
-python modular_policy/train_modular.py \
+python plot_film_gamma.py \
+    --checkpoint /home/sviswasam/dr/unitree_rl_gym/output_film_results2/Apr11_18-53-28/model_400.pt \
     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
-    --variants_metadata resources/robots/g1_ood_test_sets_old/all_combined/variants_metadata.json \
-    --num_envs 512 \
-    --headless \
-    --out_dir ./output_film_finetune \
-    --seed 1409 \
-    --graph_encoding rwse \
-    --film \
-    --resume /home/sviswasam/dr/unitree_rl_gym/output_film_results2/Apr11_18-53-28/model_400.pt\
-    --max_iters 2000 \
+    --variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
+    --out film_gamma_heatmap.pdf

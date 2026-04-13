@@ -93,15 +93,17 @@ def get_limb_labels(xml_path, num_limbs, max_limbs):
 
 # ── Build a dummy obs for one robot ──────────────────────────────────────────
 
-def build_dummy_obs(xml_path, urdf_path, device, num_dof=12):
-    """
-    Build a minimal obs dict with zero kinematics but correct context/graph.
-    We only care about context and graph features for the attention map —
-    the proprioceptive tokens are zeroed so the attention pattern reflects
-    purely the morphology conditioning.
-    """
+def build_dummy_obs(xml_path, urdf_path, device, num_dof=12, limb_obs_size=None):
     obs_builder = ZeroShotObsBuilder(
         xml_path, device, urdf_path=urdf_path, num_dof=num_dof)
+
+    # Override limb_obs_size and use_ltv based on what the checkpoint
+    # actually expects, not what ZeroShotObsBuilder infers from graph_enc.
+    if limb_obs_size is not None and limb_obs_size != obs_builder.limb_obs_size:
+        print(f"  [build_dummy_obs] Overriding limb_obs_size: "
+              f"{obs_builder.limb_obs_size} → {limb_obs_size}")
+        obs_builder.limb_obs_size = limb_obs_size
+        obs_builder.use_ltv = (limb_obs_size == 32)
 
     prop_dim = cfg.MODEL.MAX_LIMBS * obs_builder.limb_obs_size
     obs = {
@@ -254,24 +256,59 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     device = torch.device(args.device)
 
-    # ── Config ────────────────────────────────────────────────────────────
-    cfg.MODEL.GRAPH_ENCODING = args.graph_encoding
-    cfg.MODEL.MAX_LIMBS      = 13
-    cfg.MODEL.MAX_JOINTS     = 12
-    cfg.PPO.NUM_ENVS         = 1
-    cfg.PPO.BATCH_SIZE       = 1
-    cfg.ENV.WALKERS          = ["g1"]
-
-    # ── Load checkpoint ───────────────────────────────────────────────────
+    # ── Load checkpoint first so we can auto-detect architecture ─────────
     print(f"Loading: {args.checkpoint}")
     ckpt = torch.load(args.checkpoint, map_location=device)
+    state_keys = ckpt["model_state_dict"].keys()
 
-    has_film = any("film_generator" in k
-                   for k in ckpt["model_state_dict"].keys())
+    has_film = any("film_generator" in k for k in state_keys)
+    has_gcn  = any("gcn.layers" in k     for k in state_keys)
+
+    # Auto-detect graph encoding — ignore --graph_encoding if checkpoint
+    # has no GCN keys so we never build layers that don't exist.
+    if has_gcn:
+        resolved_graph_enc = args.graph_encoding
+        if resolved_graph_enc == "none":
+            resolved_graph_enc = "rwse"
+            print(f"  [Warning] Checkpoint has GCN keys but --graph_encoding=none; "
+                  f"defaulting to 'rwse'")
+    else:
+        if args.graph_encoding != "none":
+            print(f"  [Warning] --graph_encoding={args.graph_encoding} requested "
+                  f"but checkpoint has no GCN keys — falling back to 'none'")
+        resolved_graph_enc = "none"
+
+    print(f"  FiLM       : {has_film}")
+    print(f"  GCN        : {has_gcn}")
+    print(f"  Graph enc  : {resolved_graph_enc}")
+
+    # ── Config ────────────────────────────────────────────────────────────
+    cfg.MODEL.GRAPH_ENCODING       = resolved_graph_enc
     cfg.MODEL.TRANSFORMER.USE_FILM = has_film
-    print(f"  FiLM: {has_film}")
+    cfg.MODEL.MAX_LIMBS            = 13
+    cfg.MODEL.MAX_JOINTS           = 12
+    cfg.PPO.NUM_ENVS               = 1
+    cfg.PPO.BATCH_SIZE             = 1
+    cfg.ENV.WALKERS                = ["g1"]
 
-    limb_obs_size = 26 if args.graph_encoding != "none" else 32
+    if has_gcn:
+        cfg.MODEL.RWSE_K         = 8
+        cfg.MODEL.GCN.HIDDEN_DIM = 16
+        cfg.MODEL.GCN.OUT_DIM    = 13
+        cfg.MODEL.GCN.NUM_LAYERS = 4
+
+    # ── Build observation space ───────────────────────────────────────────
+    # Detect limb_obs_size from the embedding weight shape in the checkpoint.
+    # limb_embed.weight shape is (d_model, limb_obs_size) — index [1] gives it.
+    limb_obs_size = None
+    for k, v in ckpt["model_state_dict"].items():
+        if "limb_embed.weight" in k:
+            limb_obs_size = v.shape[1]
+            break
+    if limb_obs_size is None:
+        raise RuntimeError("Could not detect limb_obs_size from checkpoint — "
+                        "no 'limb_embed.weight' key found.")
+    print(f"  limb_obs_size: {limb_obs_size}  (auto-detected from checkpoint)")
     prop_dim      = cfg.MODEL.MAX_LIMBS * limb_obs_size
     ctx_dim       = cfg.MODEL.MAX_LIMBS * MORPH_CTX_DIM
     inf           = float("inf")
@@ -286,8 +323,10 @@ def main():
         "SWAT_RE":          _BoxSpace(-inf, inf,
                                      (cfg.MODEL.MAX_LIMBS, cfg.MODEL.MAX_LIMBS, 3)),
     }
-    if args.graph_encoding != "none":
-        fd = 7 if args.graph_encoding == "onehot" else 6
+    if resolved_graph_enc != "none":
+        fd = (7 if resolved_graph_enc == "onehot"
+              else 6 if resolved_graph_enc == "topological"
+              else cfg.MODEL.RWSE_K)   # rwse
         obs_spaces["graph_node_features"] = _BoxSpace(
             -inf, inf, (cfg.MODEL.MAX_LIMBS, fd))
         obs_spaces["graph_A_norm"] = _BoxSpace(
@@ -296,6 +335,7 @@ def main():
     observation_space = _DictSpace(obs_spaces)
     action_space      = _BoxSpace(-1., 1., (cfg.MODEL.MAX_LIMBS,))
 
+    # ── Build model and load weights ──────────────────────────────────────
     actor_critic = ActorCritic(observation_space, action_space).to(device)
     actor_critic.load_state_dict(ckpt["model_state_dict"])
     actor_critic.eval()
@@ -303,7 +343,8 @@ def main():
     # ── Build obs for variant A ───────────────────────────────────────────
     print(f"\nBuilding obs for: {args.variant_name}")
     obs_a, num_limbs = build_dummy_obs(
-        args.xml_path, args.urdf_path, device, args.num_dof)
+    args.xml_path, args.urdf_path, device, args.num_dof,
+    limb_obs_size=limb_obs_size)
 
     limb_labels = get_limb_labels(
         args.xml_path, num_limbs, cfg.MODEL.MAX_LIMBS)
@@ -316,8 +357,7 @@ def main():
     print(f"  Got {n_layers} attention maps, "
           f"each shape {attn_a[0].shape}")
 
-    out_a = os.path.join(args.out_dir,
-                         f"attn_{args.variant_name}.png")
+    out_a = os.path.join(args.out_dir, f"attn_{args.variant_name}.png")
     plot_attention(
         attn_a, limb_labels, num_limbs,
         title=f"Attention maps — {args.variant_name}",
@@ -327,12 +367,12 @@ def main():
     if args.compare_urdf:
         print(f"\nBuilding obs for: {args.compare_name}")
         obs_b, _ = build_dummy_obs(
-            args.xml_path, args.compare_urdf, device, args.num_dof)
+    args.xml_path, args.compare_urdf, device, args.num_dof,
+    limb_obs_size=limb_obs_size)
 
         attn_b = get_attention_maps(actor_critic, obs_b, device)
 
-        out_b = os.path.join(args.out_dir,
-                             f"attn_{args.compare_name}.png")
+        out_b = os.path.join(args.out_dir, f"attn_{args.compare_name}.png")
         plot_attention(
             attn_b, limb_labels, num_limbs,
             title=f"Attention maps — {args.compare_name}",

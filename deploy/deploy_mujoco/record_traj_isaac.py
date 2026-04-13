@@ -68,7 +68,7 @@ def run_eval_rollouts(runner, env, variant_idx, num_rollouts,
 
     env.reset_idx(torch.arange(env.num_envs, device=device))
     runner.commands[:, 0] = runner.commands[:, 0] * 0 + 0.5
-    obs = runner._get_obs_normalized()
+    obs = runner._get_obs_normalized(update_stats=False)
 
     # ── Context debug — printed once at the very start ────────────────────
     ei0 = env_ids_variant[0].item()
@@ -277,7 +277,7 @@ def main():
     print(f"\n── Recording {args.num_steps} steps ──")
     env.reset_idx(torch.arange(env.num_envs, device=torch.device(args.rl_device)))
     runner.commands[:, 0] = args.cmd_vx
-    obs = runner._get_obs_normalized()
+    obs = runner._get_obs_normalized(update_stats=False)
 
     env_ids_variant = (env.env_variant_ids == variant_idx).nonzero(
         as_tuple=True)[0]
