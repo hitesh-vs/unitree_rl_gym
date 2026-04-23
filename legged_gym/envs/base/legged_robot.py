@@ -273,6 +273,8 @@ class LeggedRobot(BaseTask):
         #     print(f"Total mass {sum} (before randomization)")
         # randomize base mass
         if self.cfg.domain_rand.randomize_base_mass:
+            if len(props) == 0:          # guard against empty props list
+                return props
             rng = self.cfg.domain_rand.added_mass_range
             props[0].mass += np.random.uniform(rng[0], rng[1])
         return props

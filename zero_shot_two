@@ -1,0 +1,139 @@
+Parsing: logs/eval_sweep_20260412_182732.log
+  Found 60 result blocks
+
+=========================================================================================================
+Variant                        Model        Mean    ±CI  Median    Max    Top 10%    ±CI   >200%   >500%
+---------------------------------------------------------------------------------------------------------
+all_perturbed_robot_0          film        149.6   10.4   133.0    362      306.1   23.2   18.9%    0.0%
+all_perturbed_robot_0          baseline    114.9    6.2   110.0    301      204.7   19.1    5.1%    0.0%
+all_perturbed_robot_1          film        128.1    9.0   110.0    384      266.0   36.1   10.4%    0.0%
+all_perturbed_robot_1          baseline    116.9    8.0   105.0    328      242.8   26.5    9.2%    0.0%
+all_perturbed_robot_2          film        152.0   12.6   135.0    706      342.2   65.9   17.9%    1.2%
+all_perturbed_robot_2          baseline    111.9    6.5   105.0    278      211.2   22.4    4.6%    0.0%
+all_perturbed_robot_3          film        141.9   11.2   117.0    596      305.3   43.8   19.7%    0.6%
+all_perturbed_robot_3          baseline    116.1    7.1   109.0    291      229.5   34.5    6.9%    0.0%
+all_perturbed_robot_4          film        135.2    9.1   125.0    377      267.6   33.2   12.7%    0.0%
+all_perturbed_robot_4          baseline    106.9    6.1    98.0    267      192.3   19.9    2.3%    0.0%
+armature_perturbed_robot_0     film        142.8   11.6   124.0    620      313.0   52.1   18.3%    0.6%
+armature_perturbed_robot_0     baseline    113.7    6.9   107.0    401      218.6   33.0    5.1%    0.0%
+armature_perturbed_robot_1     film        150.2   11.4   132.0    450      317.3   29.5   20.8%    0.0%
+armature_perturbed_robot_1     baseline    108.8    6.3   108.0    311      200.8   25.6    3.5%    0.0%
+armature_perturbed_robot_2     film        140.5   10.2   134.0    447      295.8   39.7   14.5%    0.0%
+armature_perturbed_robot_2     baseline    116.3    6.7   110.0    304      212.6   22.1    6.4%    0.0%
+armature_perturbed_robot_3     film        145.6   10.7   135.0    521      302.1   44.0   15.6%    0.6%
+armature_perturbed_robot_3     baseline    105.2    6.0    97.0    248      195.1   18.9    4.6%    0.0%
+armature_perturbed_robot_4     film        142.8   12.6   124.0    588      342.5   68.5   15.0%    1.2%
+armature_perturbed_robot_4     baseline    106.3    6.6    95.0    311      204.5   29.6    5.2%    0.0%
+damping_perturbed_robot_0      film        146.4   12.7   125.0    707      336.7   68.5   18.3%    1.1%
+damping_perturbed_robot_0      baseline    114.5    8.0   104.0    472      235.9   41.3    6.9%    0.0%
+damping_perturbed_robot_1      film        146.1   12.0   127.0    584      328.9   47.9   17.9%    0.6%
+damping_perturbed_robot_1      baseline    115.7    7.7   104.0    298      230.6   27.4    6.4%    0.0%
+damping_perturbed_robot_2      film        137.7    9.7   124.0    436      286.8   37.7   14.5%    0.0%
+damping_perturbed_robot_2      baseline    116.1    8.0   108.0    422      233.3   34.9    6.4%    0.0%
+damping_perturbed_robot_3      film        137.3    9.1   123.0    477      269.5   40.4   13.9%    0.0%
+damping_perturbed_robot_3      baseline    107.7    6.6   101.0    303      205.6   28.5    4.6%    0.0%
+damping_perturbed_robot_4      film        146.0    9.4   133.0    446      278.2   33.0   19.1%    0.0%
+damping_perturbed_robot_4      baseline    114.5    6.6   110.0    329      209.4   25.3    5.2%    0.0%
+effort_perturbed_robot_0       film        145.0   10.9   127.0    541      311.8   47.1   17.7%    0.6%
+effort_perturbed_robot_0       baseline    115.2    6.8   109.0    396      214.6   31.9    4.6%    0.0%
+effort_perturbed_robot_1       film        148.8   11.1   129.0    501      320.4   44.3   16.8%    0.6%
+effort_perturbed_robot_1       baseline    108.6    6.8    98.0    297      211.8   24.8    4.0%    0.0%
+effort_perturbed_robot_2       film        143.7   13.8   119.0    686      359.3   80.1   13.3%    1.2%
+effort_perturbed_robot_2       baseline    117.2    7.3   109.0    389      226.1   34.6    5.2%    0.0%
+effort_perturbed_robot_3       film        134.0    9.5   113.0    449      273.8   39.8   12.7%    0.0%
+effort_perturbed_robot_3       baseline    112.3    7.4   103.0    316      224.1   22.8    6.4%    0.0%
+effort_perturbed_robot_4       film        138.8   11.0   123.0    471      310.4   51.0   15.0%    0.0%
+effort_perturbed_robot_4       baseline    111.2    6.6   102.0    311      210.9   25.9    4.6%    0.0%
+joint_range_perturbed_robot_0  film        142.2   12.1   130.0    766      307.1   64.2   18.3%    0.6%
+joint_range_perturbed_robot_0  baseline    114.4    6.9   104.0    320      222.4   21.8    6.9%    0.0%
+joint_range_perturbed_robot_1  film        137.3    9.8   121.0    491      282.3   45.8   12.7%    0.0%
+joint_range_perturbed_robot_1  baseline    115.3    7.6   101.0    314      232.5   31.3    7.5%    0.0%
+joint_range_perturbed_robot_2  film        147.3   11.8   125.0    471      331.2   49.6   15.0%    0.0%
+joint_range_perturbed_robot_2  baseline    116.4    8.2   108.0    450      239.7   39.9    6.9%    0.0%
+joint_range_perturbed_robot_3  film        139.4   10.1   130.0    388      290.4   39.2   15.6%    0.0%
+joint_range_perturbed_robot_3  baseline    107.3    6.2   104.0    339      197.5   24.1    2.3%    0.0%
+joint_range_perturbed_robot_4  film        145.0   12.0   124.0    501      337.1   58.3   16.8%    1.2%
+joint_range_perturbed_robot_4  baseline    113.5    6.7   108.0    273      215.7   22.4    6.9%    0.0%
+mass_perturbed_robot_0         film        144.8   11.3   128.0    617      326.4   55.4   14.9%    0.6%
+mass_perturbed_robot_0         baseline    108.5    6.3   100.0    280      204.8   23.8    4.0%    0.0%
+mass_perturbed_robot_1         film        142.7   10.0   129.0    387      287.5   28.8   16.8%    0.0%
+mass_perturbed_robot_1         baseline    108.6    6.2   106.0    302      192.9   21.4    2.9%    0.0%
+mass_perturbed_robot_2         film        141.0   10.0   132.0    401      282.2   36.9   17.3%    0.0%
+mass_perturbed_robot_2         baseline    114.8    6.5   110.0    280      209.9   20.3    5.2%    0.0%
+mass_perturbed_robot_3         film        146.8   10.6   130.0    498      316.1   46.3   17.3%    0.0%
+mass_perturbed_robot_3         baseline    118.0    8.4   106.0    466      242.6   37.1    8.7%    0.0%
+mass_perturbed_robot_4         film        146.6   10.9   130.0    495      307.4   46.2   17.9%    0.0%
+mass_perturbed_robot_4         baseline    113.2    7.6   100.0    346      229.2   29.9    6.9%    0.0%
+=========================================================================================================
+
+================================================================================
+FiLM vs Baseline comparison (FiLM - Baseline):
+--------------------------------------------------------------------------------
+all_perturbed_robot_0          mean +34.7  max +61  top10% +101.4 (ΔCI +4.1)  >500% +0.0pp  [FiLM]
+all_perturbed_robot_1          mean +11.2  max +56  top10% +23.2 (ΔCI +9.6)  >500% +0.0pp  [FiLM]
+all_perturbed_robot_2          mean +40.1  max +428  top10% +131.0 (ΔCI +43.5)  >500% +1.2pp  [FiLM]
+all_perturbed_robot_3          mean +25.8  max +305  top10% +75.8 (ΔCI +9.3)  >500% +0.6pp  [FiLM]
+all_perturbed_robot_4          mean +28.3  max +110  top10% +75.3 (ΔCI +13.3)  >500% +0.0pp  [FiLM]
+armature_perturbed_robot_0     mean +29.1  max +219  top10% +94.4 (ΔCI +19.1)  >500% +0.6pp  [FiLM]
+armature_perturbed_robot_1     mean +41.4  max +139  top10% +116.5 (ΔCI +3.9)  >500% +0.0pp  [FiLM]
+armature_perturbed_robot_2     mean +24.2  max +143  top10% +83.2 (ΔCI +17.6)  >500% +0.0pp  [FiLM]
+armature_perturbed_robot_3     mean +40.4  max +273  top10% +107.0 (ΔCI +25.1)  >500% +0.6pp  [FiLM]
+armature_perturbed_robot_4     mean +36.5  max +277  top10% +138.0 (ΔCI +38.9)  >500% +1.2pp  [FiLM]
+damping_perturbed_robot_0      mean +31.9  max +235  top10% +100.8 (ΔCI +27.2)  >500% +1.1pp  [FiLM]
+damping_perturbed_robot_1      mean +30.4  max +286  top10% +98.3 (ΔCI +20.5)  >500% +0.6pp  [FiLM]
+damping_perturbed_robot_2      mean +21.6  max +14  top10% +53.5 (ΔCI +2.8)  >500% +0.0pp  [FiLM]
+damping_perturbed_robot_3      mean +29.6  max +174  top10% +63.9 (ΔCI +11.9)  >500% +0.0pp  [FiLM]
+damping_perturbed_robot_4      mean +31.5  max +117  top10% +68.8 (ΔCI +7.7)  >500% +0.0pp  [FiLM]
+effort_perturbed_robot_0       mean +29.8  max +145  top10% +97.2 (ΔCI +15.2)  >500% +0.6pp  [FiLM]
+effort_perturbed_robot_1       mean +40.2  max +204  top10% +108.6 (ΔCI +19.5)  >500% +0.6pp  [FiLM]
+effort_perturbed_robot_2       mean +26.5  max +297  top10% +133.2 (ΔCI +45.5)  >500% +1.2pp  [FiLM]
+effort_perturbed_robot_3       mean +21.7  max +133  top10% +49.7 (ΔCI +17.0)  >500% +0.0pp  [FiLM]
+effort_perturbed_robot_4       mean +27.6  max +160  top10% +99.5 (ΔCI +25.1)  >500% +0.0pp  [FiLM]
+joint_range_perturbed_robot_0  mean +27.8  max +446  top10% +84.7 (ΔCI +42.4)  >500% +0.6pp  [FiLM]
+joint_range_perturbed_robot_1  mean +22.0  max +177  top10% +49.8 (ΔCI +14.5)  >500% +0.0pp  [FiLM]
+joint_range_perturbed_robot_2  mean +30.9  max +21  top10% +91.5 (ΔCI +9.7)  >500% +0.0pp  [FiLM]
+joint_range_perturbed_robot_3  mean +32.1  max +49  top10% +92.9 (ΔCI +15.1)  >500% +0.0pp  [FiLM]
+joint_range_perturbed_robot_4  mean +31.5  max +228  top10% +121.4 (ΔCI +35.9)  >500% +1.2pp  [FiLM]
+mass_perturbed_robot_0         mean +36.3  max +337  top10% +121.6 (ΔCI +31.6)  >500% +0.6pp  [FiLM]
+mass_perturbed_robot_1         mean +34.1  max +85  top10% +94.6 (ΔCI +7.4)  >500% +0.0pp  [FiLM]
+mass_perturbed_robot_2         mean +26.2  max +121  top10% +72.3 (ΔCI +16.6)  >500% +0.0pp  [FiLM]
+mass_perturbed_robot_3         mean +28.8  max +32  top10% +73.5 (ΔCI +9.2)  >500% +0.0pp  [FiLM]
+mass_perturbed_robot_4         mean +33.4  max +149  top10% +78.2 (ΔCI +16.3)  >500% +0.0pp  [FiLM]
+================================================================================
+
+============================================================
+FiLM vs Baseline comparison (FiLM - Baseline):
+------------------------------------------------------------
+all_perturbed_robot_0          mean +34.7  max +61  top10% +101.4  >500% +0.0pp  [FiLM]
+all_perturbed_robot_1          mean +11.2  max +56  top10% +23.2  >500% +0.0pp  [FiLM]
+all_perturbed_robot_2          mean +40.1  max +428  top10% +131.0  >500% +1.2pp  [FiLM]
+all_perturbed_robot_3          mean +25.8  max +305  top10% +75.8  >500% +0.6pp  [FiLM]
+all_perturbed_robot_4          mean +28.3  max +110  top10% +75.3  >500% +0.0pp  [FiLM]
+armature_perturbed_robot_0     mean +29.1  max +219  top10% +94.4  >500% +0.6pp  [FiLM]
+armature_perturbed_robot_1     mean +41.4  max +139  top10% +116.5  >500% +0.0pp  [FiLM]
+armature_perturbed_robot_2     mean +24.2  max +143  top10% +83.2  >500% +0.0pp  [FiLM]
+armature_perturbed_robot_3     mean +40.4  max +273  top10% +107.0  >500% +0.6pp  [FiLM]
+armature_perturbed_robot_4     mean +36.5  max +277  top10% +138.0  >500% +1.2pp  [FiLM]
+damping_perturbed_robot_0      mean +31.9  max +235  top10% +100.8  >500% +1.1pp  [FiLM]
+damping_perturbed_robot_1      mean +30.4  max +286  top10% +98.3  >500% +0.6pp  [FiLM]
+damping_perturbed_robot_2      mean +21.6  max +14  top10% +53.5  >500% +0.0pp  [FiLM]
+damping_perturbed_robot_3      mean +29.6  max +174  top10% +63.9  >500% +0.0pp  [FiLM]
+damping_perturbed_robot_4      mean +31.5  max +117  top10% +68.8  >500% +0.0pp  [FiLM]
+effort_perturbed_robot_0       mean +29.8  max +145  top10% +97.2  >500% +0.6pp  [FiLM]
+effort_perturbed_robot_1       mean +40.2  max +204  top10% +108.6  >500% +0.6pp  [FiLM]
+effort_perturbed_robot_2       mean +26.5  max +297  top10% +133.2  >500% +1.2pp  [FiLM]
+effort_perturbed_robot_3       mean +21.7  max +133  top10% +49.7  >500% +0.0pp  [FiLM]
+effort_perturbed_robot_4       mean +27.6  max +160  top10% +99.5  >500% +0.0pp  [FiLM]
+joint_range_perturbed_robot_0  mean +27.8  max +446  top10% +84.7  >500% +0.6pp  [FiLM]
+joint_range_perturbed_robot_1  mean +22.0  max +177  top10% +49.8  >500% +0.0pp  [FiLM]
+joint_range_perturbed_robot_2  mean +30.9  max +21  top10% +91.5  >500% +0.0pp  [FiLM]
+joint_range_perturbed_robot_3  mean +32.1  max +49  top10% +92.9  >500% +0.0pp  [FiLM]
+joint_range_perturbed_robot_4  mean +31.5  max +228  top10% +121.4  >500% +1.2pp  [FiLM]
+mass_perturbed_robot_0         mean +36.3  max +337  top10% +121.6  >500% +0.6pp  [FiLM]
+mass_perturbed_robot_1         mean +34.1  max +85  top10% +94.6  >500% +0.0pp  [FiLM]
+mass_perturbed_robot_2         mean +26.2  max +121  top10% +72.3  >500% +0.0pp  [FiLM]
+mass_perturbed_robot_3         mean +28.8  max +32  top10% +73.5  >500% +0.0pp  [FiLM]
+mass_perturbed_robot_4         mean +33.4  max +149  top10% +78.2  >500% +0.0pp  [FiLM]
+============================================================
+
+Saved → results.json

@@ -3,13 +3,13 @@
 #SBATCH --mail-type=ALL
 #SBATCH -p short
 #SBATCH -N 1
-#SBATCH -c 4
+#SBATCH -c 2
 #SBATCH --gres=gpu:L40S:1
-#SBATCH -t 23:59:00
-#SBATCH --mem 128G
-#SBATCH --job-name="base"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_base_finetune.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_base_finetune.err
+#SBATCH -t 03:00:00
+#SBATCH --mem 64G
+#SBATCH --job-name="record"
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_video_10.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_video_10.err
 
 # 1. Load basic modules
 source /etc/profile.d/modules.sh
@@ -22,7 +22,6 @@ module load python/3.8.13/slu6jvw
 # 2. Set Compiler flags
 export CXX=g++
 export CC=gcc
-export MAX_JOBS=4
 
 # 3. CRITICAL: Explicit Python Headers (the slu6jvw path)
 export PYTHON_HEADERS=/cm/shared/spack/opt/spack/linux-ubuntu20.04-x86_64/gcc-12.1.0/python-3.8.13-slu6jvwlh43vemachntuxtqyqbxpltdg/include/python3.8
@@ -57,14 +56,53 @@ source /home/sviswasam/dr/unitree_env/bin/activate
 # This bypasses ninja's stale-check entirely
 export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 
-# 7. Execute
-python modular_policy/train_modular.py \
+# 7. Execute (Single robot)
+# python deploy/deploy_mujoco/record_traj_modular.py \
+#     --checkpoint output_walk_isaac_success/Mar21_18-51-07/model_400.pt \
+#     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
+#     --output_file trajectory_g1.pkl \
+#     --duration 10.0 \
+#     --cmd_vx 0.5 \
+#     --graph_encoding topological \
+#     --device cpu
+
+# 7. Execute (Multi robot)
+# python deploy/deploy_mujoco/record_traj_all_variants.py \
+#     --checkpoint output_multi_robot2/Mar23_16-41-47/model_600.pt \
+#     --variants_metadata resources/robots/g1_variants/variants_metadata.json \
+#     --out_dir trajectories2/ \
+#     --duration 10.0 \
+#     --cmd_vx 0.5 \
+#     --graph_encoding topological
+
+# python deploy/deploy_mujoco/eval_zeroshot.py \
+#     --checkpoint /home/sviswasam/dr/unitree_rl_gym/output_film_wide/Mar31_18-18-17/model_400.pt \
+#     --variants_metadata resources/robots/g1_variants_heldout/variants_metadata.json \
+#     --base_xml /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
+#     --graph_encoding rwse --duration 20.0 --cmd_vx 0.5 \
+#     --out_dir eval_results/film_heldout2
+
+# python deploy/deploy_mujoco/record_traj_zero_shot.py \
+#     --checkpoint output_film_wide/Mar31_18-18-17/model_400.pt \
+#     --variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
+#     --train_variants_metadata resources/robots/g1_variants_wide/variants_metadata.json \
+#     --base_xml /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
+#     --out_dir trajectories/film_heldout \
+#     --duration 10.0 --cmd_vx 0.5 --graph_encoding rwse
+
+# --checkpoint output_baseline_wide/Mar31_18-20-20/model_400.pt \
+
+# output_baseline_results2/Apr11_18-52-43/model_400.pt
+# output_film_results2/Apr11_18-53-28/model_400.pt
+
+# FiLM model
+python deploy/deploy_mujoco/record_traj_mlp.py \
+    --checkpoint output_flat_results/Apr13_18-46-15/model_1100.pt \
     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
-    --variants_metadata resources/robots/g1_ood_test_sets_old/all_combined/variants_metadata.json \
-    --num_envs 512 \
-    --headless \
-    --out_dir ./output_base_finetune \
-    --seed 1409 \
-    --graph_encoding none \
-    --resume /home/sviswasam/dr/unitree_rl_gym/output_baseline_results2/Apr11_18-52-43/model_400.pt\
-    --max_iters 2000 \
+    --variants_metadata resources/robots/g1_ood_test_sets2/mass_perturbed/variants_metadata.json \
+    --variant_name mass_perturbed_robot_0 \
+    --num_eval_rollouts 10 \
+    --cmd_vx 0.5 \
+    --out traj_ood_damping.pkl
+
+

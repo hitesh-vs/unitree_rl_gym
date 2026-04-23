@@ -6,7 +6,7 @@
 
 cd /home/sviswasam/dr/unitree_rl_gym
 
-BASELINE_CKPT="/home/sviswasam/dr/unitree_rl_gym/output_baseline_results2/Apr11_18-52-43/model_400.pt"
+BASELINE_CKPT="/home/sviswasam/dr/unitree_rl_gym/output_flat_results/Apr13_18-46-15/model_1100.pt"
 FILM_CKPT="/home/sviswasam/dr/unitree_rl_gym/output_film_results2/Apr11_18-53-28/model_400.pt"
 XML_PATH="/home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml"
 OOD_ROOT="/home/sviswasam/dr/unitree_rl_gym/resources/robots/g1_ood_test_sets2"

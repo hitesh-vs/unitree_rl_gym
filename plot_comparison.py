@@ -6,85 +6,118 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from sklearn.manifold import TSNE
 
-# --- Marker list for Robots ---
+# --- Configuration ---
+# Markers for different robots
 MARKERS = ["o", "s", "^", "D", "v", "P", "*", "X", "h", "+"]
+
+# Mapping fine-grained semantics to high-level groups
+SEMANTIC_GROUPS = {
+    "ankle": ["ankle"],
+    "knee":  ["knee"],
+    "hip":   ["hip"],
+    "shoulder": ["shoulder"],
+    "elbow": ["elbow"],
+    "wrist": ["wrist"],
+    "head":  ["head", "neck"],
+    "foot":  ["foot", "toe"]
+}
+
+def get_high_level_group(semantic_str):
+    s = semantic_str.lower()
+    for group, keywords in SEMANTIC_GROUPS.items():
+        if any(k in s for k in keywords):
+            return group.capitalize()
+    return "Other"
 
 def load_and_preprocess(prefix):
     X = np.load(f"{prefix}_embeds.npy")
     raw_labels = pickle.load(open(f"{prefix}_labels.pkl", "rb"))
+
+    # Filter out non-limbs
+    keep = [i for i, l in enumerate(raw_labels)
+            if l["semantic"] not in ("root", "center_root", "pad")
+            and "pelvis" not in l["body"].lower()]
+    X = X[keep]
+    raw_labels = [raw_labels[i] for i in keep]
     
     if len(X) > 5000:
         idx = np.random.RandomState(42).choice(len(X), 5000, replace=False)
         X, raw_labels = X[idx], [raw_labels[i] for i in idx]
     
+    # Cosine normalization + t-SNE
     X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
     Z = TSNE(n_components=2, perplexity=40, metric="cosine", 
              n_iter=2000, random_state=42).fit_transform(X)
     
-    # We now keep the full semantic string (e.g., 'left_ankle_pitch')
-    semantics = [l["semantic"] for l in raw_labels]
+    groups = [get_high_level_group(l["semantic"]) for l in raw_labels]
     robots = [l["robot"] for l in raw_labels]
     
-    return Z, semantics, robots
+    return Z, groups, robots
 
-def scatter_panel(ax, Z, semantic_labels, robot_labels, title):
-    unique_links = sorted(list(set(semantic_labels)))
+def scatter_panel(ax, Z, groups, robot_labels, title):
+    unique_groups = sorted(list(set(groups)))
     unique_robots = sorted(list(set(robot_labels)))
     
-    # Create a large color palette for individual links
-    cmap = plt.get_cmap("tab20") # tab20 has 20 distinct colors; use 'gist_rainbow' if you have more
-    link2color = {link: cmap(i / len(unique_links)) for i, link in enumerate(unique_links)}
+    # Paper-friendly Muted Colors (Tableau 10 Light/Medium)
+    # Colors: Muted blue, orange, green, red, purple, brown, pink, gray, olive
+    muted_colors = [
+        '#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', 
+        '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac'
+    ]
+    group2color = {g: muted_colors[i % len(muted_colors)] for i, g in enumerate(unique_groups)}
     robot2marker = {r: MARKERS[i % len(MARKERS)] for i, r in enumerate(unique_robots)}
 
-    sem_arr = np.array(semantic_labels)
+    grp_arr = np.array(groups)
     rob_arr = np.array(robot_labels)
 
-    for link in unique_links:
-        for robot in unique_robots:
-            mask = (sem_arr == link) & (rob_arr == robot)
+    for g in unique_groups:
+        for r in unique_robots:
+            mask = (grp_arr == g) & (rob_arr == r)
             if mask.sum() == 0: continue
             ax.scatter(Z[mask, 0], Z[mask, 1], 
-                       color=link2color[link],
-                       marker=robot2marker[robot], 
-                       alpha=0.7, s=25, linewidths=0)
+                       color=group2color[g],
+                       marker=robot2marker[r], 
+                       alpha=0.55, s=30, edgecolors='none')
 
-    # LEGEND 1: Individual Links (Colors)
-    # Note: If you have >20 links, this legend will be very tall. 
-    # We use a smaller font and 2 columns.
-    c_handles = [Line2D([0], [0], marker="o", color="w", markerfacecolor=link2color[l], 
-                 label=l, markersize=6) for l in unique_links]
-    leg1 = ax.legend(handles=c_handles, title="Individual Links", 
-                     loc="upper left", bbox_to_anchor=(1, 1), fontsize=6, ncol=1)
+    ax.set_title(title, fontsize=12, fontweight='bold', pad=10)
+    ax.set_xticks([]); ax.set_yticks([])
+
+    # Internal Panel Legend (Joint Groups)
+    group_handles = [Line2D([0], [0], marker="o", color="w", markerfacecolor=c, 
+                     label=g, markersize=8) for g, c in group2color.items()]
+    leg1 = ax.legend(handles=group_handles, title="Joint Group", loc="upper left", 
+                     bbox_to_anchor=(1.01, 1), fontsize=8, frameon=False)
     ax.add_artist(leg1)
 
-    # LEGEND 2: Robot Identity (Shapes)
-    s_handles = [Line2D([0], [0], marker=robot2marker[r], color="#555555", linestyle='None',
-                 label=r, markersize=7) for r in unique_robots]
-    ax.legend(handles=s_handles, title="Robot", loc="lower left", fontsize=7)
-
-    ax.set_title(title, fontsize=11)
-    ax.set_xticks([]); ax.set_yticks([])
+    # Internal Panel Legend (Robot Identity)
+    robot_handles = [Line2D([0], [0], marker=m, color="w", markerfacecolor="#7f7f7f", 
+                     markeredgecolor="#7f7f7f", label=r, markersize=7) for r, m in robot2marker.items()]
+    ax.legend(handles=robot_handles, title="Robot", loc="lower left", 
+              bbox_to_anchor=(1.01, 0), fontsize=8, frameon=False)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--none_prefix", required=True)
     parser.add_argument("--rwse_prefix", required=True)
-    parser.add_argument("--out", default="comparison_individual_links.png")
+    parser.add_argument("--out", default="tsne_comparison.pdf") # PDF is better for papers
     args = parser.parse_args()
 
-    Z_n, S_n, R_n = load_and_preprocess(args.none_prefix)
-    Z_r, S_r, R_r = load_and_preprocess(args.rwse_prefix)
+    Z_n, G_n, R_n = load_and_preprocess(args.none_prefix)
+    Z_r, G_r, R_r = load_and_preprocess(args.rwse_prefix)
 
-    # Increased width (figsize) to accommodate the long legend on the right
-    fig, axes = plt.subplots(1, 2, figsize=(18, 7))
+    # Adjusted width to accommodate the side-by-side internal legends
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-    scatter_panel(axes[0], Z_n, S_n, R_n, "Identity (No Encoding)")
-    scatter_panel(axes[1], Z_r, S_r, R_r, "RWSE (Structural Encoding)")
+    scatter_panel(axes[0], Z_n, G_n, R_n, "Identity (No Positional Encoding)")
+    scatter_panel(axes[1], Z_r, G_r, R_r, "RWSE (Structural Positional Encoding)")
 
-    plt.suptitle("Fine-grained Link Embeddings: Identity vs RWSE", fontsize=14, y=1.05)
-    plt.tight_layout()
-    plt.savefig(args.out, dpi=300, bbox_inches="tight")
-    print(f"Detailed link plot saved to: {args.out}")
+    plt.suptitle("Clustering of Functional Link Groups across Robot Morphologies", 
+                 fontsize=14, y=0.98, fontweight='bold')
+    
+    # Using tight_layout with rect to make room for titles/suptext
+    plt.tight_layout(rect=[0, 0, 0.9, 1]) 
+    plt.savefig(args.out, bbox_inches="tight")
+    print(f"Paper-ready plot saved to: {args.out}")
 
 if __name__ == "__main__":
     main()

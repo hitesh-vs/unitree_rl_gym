@@ -51,6 +51,11 @@ class MultiVariantG1Robot(G1Robot):
             print(f"  [{i}] {name}  base_height_target={m['base_height_target']}")
 
         super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
+        # Force GPU sync before buffers are used
+        import time
+        time.sleep(2.0)
+        self.gym.simulate(self.sim)
+        self.gym.fetch_results(self.sim, True)
 
     def _create_envs(self):
         """

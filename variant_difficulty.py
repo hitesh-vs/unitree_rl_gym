@@ -27,8 +27,8 @@ def variant_difficulty(changes_path):
     return float(np.mean(scores))
 
 # Score all variants
-variant_dir = "resources/robots/g1_variants_wide"
+variant_dir = "resources/robots/g1_ood_test_sets_old/all_combined"
 for i in range(10):
-    path = f"{variant_dir}/robot_variant_{i}_changes.json"
+    path = f"{variant_dir}/all_combined_robot_{i}_changes.json"
     score = variant_difficulty(path)
     print(f"robot_variant_{i}: difficulty={score:.3f}")

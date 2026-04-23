@@ -164,9 +164,10 @@ logs
 # Output
 output_*
 
-# Any traj
+# Any traj or model
 *.pkl
 *.npy
+*.pt
 
 # Mesh files
 *.STL
@@ -174,3 +175,4 @@ output_*
 # For now
 *.json
 *.urdf
+*.pdf

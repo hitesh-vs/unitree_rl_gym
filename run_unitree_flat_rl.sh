@@ -59,8 +59,9 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 
 # 7. Execute
 python modular_policy/train_flat_rl.py \
+    --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
     --variants_metadata resources/robots/g1_variants_targeted/variants_metadata.json \
-    --num_envs 512 \
-    --max_iters 2000 \
-    --out_dir ./output_flat_rl \
-    --seed 1409
+    --num_envs 512 --headless \
+    --out_dir ./output_flat_results \
+    --seed 1409 \
+    --max_iters 2000

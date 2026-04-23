@@ -60,7 +60,7 @@ def compute_metrics(episode_lengths):
     ci_lo, ci_hi = bootstrap_ci(data)
 
     # Top 10% mean + CI
-    k             = max(1, n // 20)
+    k             = max(1, n // 10)
     top_k_vals    = np.sort(data)[-k:]
     top_k_mean    = float(np.mean(top_k_vals))
     tk_lo, tk_hi  = bootstrap_ci_topk(data, k)
