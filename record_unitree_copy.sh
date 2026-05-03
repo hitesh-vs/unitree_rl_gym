@@ -8,8 +8,8 @@
 #SBATCH -t 03:00:00
 #SBATCH --mem 64G
 #SBATCH --job-name="record"
-#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_video_test.log
-#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_video_test.err
+#SBATCH --output=/home/sviswasam/dr/unitree_rl_gym/logs/output_video_test_cap.log
+#SBATCH --error=/home/sviswasam/dr/unitree_rl_gym/logs/err_video_test_cap.err
 
 # 1. Load basic modules
 source /etc/profile.d/modules.sh
@@ -96,17 +96,14 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 # output_film_results2/Apr11_18-53-28/model_400.pt
 
 # FiLM model
-python deploy/deploy_mujoco/record_best_traj.py \
+python deploy/deploy_mujoco/record_best_traj2.py \
     --checkpoint output_film_results2/Apr11_18-53-28/model_400.pt \
     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
-    --variants_metadata resources/robots/g1_ood_test_sets2/armature_perturbed/variants_metadata.json \
-    --variant_name armature_perturbed_robot_1 \
-    --find_best_init \
+    --variants_metadata resources/robots/g1_variants_targeted/variants_metadata.json \
+    --variant_name targeted_variant_2 \
     --init_search_rollouts 850 \
-    --init_save best_init_armature1.pt \
-    --cmd_vx 0.5 \
-    --out traj_test.pkl
+    --out_dir trajs/ppt
 
 # All in one
 # 7. Execute (Sweep)
-#bash /home/sviswasam/dr/unitree_rl_gym/run_eval_sweep.sh
+#bash /home/sviswasam/dr/unitree_rl_gym/run_eval_sweep_robot_steps.sh

@@ -4,6 +4,7 @@ record_traj_isaac.py
 Two-phase evaluation:
   Phase 1 (--find_best_init): Run many rollouts, save the initial state
                                that gave the longest episode to a .pt file.
+                               Also counts physical steps (foot touchdowns).
   Phase 2 (--replay_init):    Load that saved init state, reproduce the
                                exact same episode deterministically.
 
@@ -53,23 +54,12 @@ def parse_args():
     p.add_argument("--variant_name",         required=True)
     p.add_argument("--baseline",             action="store_true", default=False)
     p.add_argument("--ood",                  action="store_true", default=False)
-
-    # Phase 1
-    p.add_argument("--find_best_init",       action="store_true", default=False,
-                   help="Search for best init state and save it")
-    p.add_argument("--init_search_rollouts", type=int, default=200,
-                   help="How many episodes to search through (default 200)")
-    p.add_argument("--init_save",            type=str, default="best_init.pt",
-                   help="Where to save the best init state")
-
-    # Phase 2
-    p.add_argument("--replay_init",          type=str, default=None,
-                   help="Path to saved init state (.pt) — replay it exactly")
-    p.add_argument("--num_eval_rollouts",    type=int, default=10,
-                   help="Episodes to run with replayed init")
-
-    p.add_argument("--min_ep_filter",        type=int, default=10,
-                   help="Ignore episodes shorter than this")
+    p.add_argument("--find_best_init",       action="store_true", default=False)
+    p.add_argument("--init_search_rollouts", type=int, default=200)
+    p.add_argument("--init_save",            type=str, default="best_init.pt")
+    p.add_argument("--replay_init",          type=str, default=None)
+    p.add_argument("--num_eval_rollouts",    type=int, default=10)
+    p.add_argument("--min_ep_filter",        type=int, default=10)
     p.add_argument("--num_steps",            type=int,   default=1000)
     p.add_argument("--max_ep_steps",         type=int,   default=1000)
     p.add_argument("--num_envs",             type=int,   default=512)
@@ -100,26 +90,26 @@ def apply_init(env, env_ids, init_state, device):
 
 def phase_find_best_init(runner, env, variant_idx, n_search,
                           max_ep_steps, min_ep_filter, device, save_path):
-    """
-    Run n_search episodes. After each episode ends, snapshot the state
-    that was set at the START of that episode (saved just after reset).
-    Keep the snapshot that produced the longest episode.
-    """
     env_ids_v = (env.env_variant_ids == variant_idx).nonzero(as_tuple=True)[0]
     n_envs    = len(env_ids_v)
     print(f"\n[Phase 1] Searching {n_search} episodes across {n_envs} envs "
           f"of variant {variant_idx}...")
     print(f"  Will save best init → {save_path}")
 
-    ep_counters  = torch.zeros(env.num_envs, dtype=torch.long, device=device)
+    ep_counters       = torch.zeros(env.num_envs, dtype=torch.long,  device=device)
+    step_counts       = torch.zeros(env.num_envs, dtype=torch.long,  device=device)
+    foot_contact_prev = torch.zeros(env.num_envs, 2, dtype=torch.bool, device=device)
+
     best_ep_len  = -1
+    best_steps   = 0
     best_init    = None
     collected    = 0
     step         = 0
 
-    # Reset and snapshot initial states
+    # Get foot indices
+    fi = runner.obs_builder.feet_indices   # [left_idx, right_idx]
+
     env.reset_idx(torch.arange(env.num_envs, device=device))
-    # Snapshot per-env init state (state just after reset = start of episode)
     env_init_snap = {}
     for ei in env_ids_v:
         ei = ei.item()
@@ -143,22 +133,36 @@ def phase_find_best_init(runner, env, variant_idx, n_search,
             ep_counters += 1
             step        += 1
 
+            # ── Count physical steps via foot touchdowns ──────────────────
+            lf_z = env.contact_forces[:env.num_envs, fi[0], 2].abs() > 1.
+            rf_z = env.contact_forces[:env.num_envs, fi[1], 2].abs() > 1.
+            contact_now  = torch.stack([lf_z, rf_z], dim=1)  # (N, 2)
+            touchdown    = (~foot_contact_prev) & contact_now
+            step_counts += touchdown.any(dim=1).long()
+            foot_contact_prev = contact_now.clone()
+
             for ei in env_ids_v:
                 ei = ei.item()
                 if dones[ei].item() or ep_counters[ei].item() >= max_ep_steps:
-                    ep_len = ep_counters[ei].item()
+                    ep_len   = ep_counters[ei].item()
+                    phys_steps = step_counts[ei].item()
                     ep_counters[ei] = 0
+                    step_counts[ei] = 0
+                    foot_contact_prev[ei] = False
 
                     if ep_len >= min_ep_filter:
                         collected += 1
                         if ep_len > best_ep_len:
                             best_ep_len = ep_len
+                            best_steps  = phys_steps
                             best_init   = {k: v.clone()
                                            for k, v in env_init_snap[ei].items()}
-                            print(f"  New best: env {ei}  ep_len={ep_len}  "
+                            print(f"  New best: env {ei}  "
+                                  f"ep_len={ep_len}  "
+                                  f"physical_steps={phys_steps}  "
                                   f"({collected}/{n_search})")
 
-                    # Reset and snapshot NEW init for this env
+                    # Reset and snapshot new init for this env
                     env.reset_idx(torch.tensor([ei], device=device))
                     env_init_snap[ei] = {
                         "root":    env.root_states[ei].clone().cpu(),
@@ -172,39 +176,39 @@ def phase_find_best_init(runner, env, variant_idx, n_search,
 
     if best_init is None:
         print("  No valid episode found!")
-        return None, -1
+        return None, -1, 0
 
-    # Save
     torch.save({
-        "init_state":  best_init,
-        "best_ep_len": best_ep_len,
-        "variant_name": variant_idx,
-        "search_n":    n_search,
+        "init_state":     best_init,
+        "best_ep_len":    best_ep_len,
+        "best_steps":     best_steps,
+        "variant_name":   variant_idx,
+        "search_n":       n_search,
     }, save_path)
 
-    print(f"\n[Phase 1 done] Best ep_len = {best_ep_len}  saved → {save_path}")
-    return best_init, best_ep_len
+    print(f"\n[Phase 1 done] Best ep_len={best_ep_len}  "
+          f"physical_steps={best_steps}  saved → {save_path}")
+    return best_init, best_ep_len, best_steps
 
 
 # ── Phase 2: replay ───────────────────────────────────────────────────────────
 
 def phase_replay_init(runner, env, variant_idx, init_state,
                        num_rollouts, max_ep_steps, device):
-    """
-    Reset every variant env to the saved init_state and run num_rollouts.
-    Because init and policy are deterministic, episodes should be nearly
-    identical — confirms reproducibility.
-    """
     env_ids_v = (env.env_variant_ids == variant_idx).nonzero(as_tuple=True)[0]
     print(f"\n[Phase 2] Replaying saved init across {len(env_ids_v)} envs, "
           f"{num_rollouts} episodes...")
 
-    ep_counters     = torch.zeros(env.num_envs, dtype=torch.long, device=device)
+    ep_counters       = torch.zeros(env.num_envs, dtype=torch.long,   device=device)
+    step_counts       = torch.zeros(env.num_envs, dtype=torch.long,   device=device)
+    foot_contact_prev = torch.zeros(env.num_envs, 2, dtype=torch.bool, device=device)
+    fi                = runner.obs_builder.feet_indices
+
     episode_lengths = []
+    physical_steps  = []
     collected       = 0
     step            = 0
 
-    # Reset all and apply fixed init
     env.reset_idx(torch.arange(env.num_envs, device=device))
     apply_init(env, env_ids_v, init_state, device)
 
@@ -222,21 +226,33 @@ def phase_replay_init(runner, env, variant_idx, init_state,
             ep_counters += 1
             step        += 1
 
+            # Count physical steps
+            lf_z = env.contact_forces[:env.num_envs, fi[0], 2].abs() > 1.
+            rf_z = env.contact_forces[:env.num_envs, fi[1], 2].abs() > 1.
+            contact_now  = torch.stack([lf_z, rf_z], dim=1)
+            touchdown    = (~foot_contact_prev) & contact_now
+            step_counts += touchdown.any(dim=1).long()
+            foot_contact_prev = contact_now.clone()
+
             for ei in env_ids_v:
                 ei = ei.item()
                 if dones[ei].item() or ep_counters[ei].item() >= max_ep_steps:
-                    ep_len = ep_counters[ei].item()
+                    ep_len     = ep_counters[ei].item()
+                    phys_steps = step_counts[ei].item()
                     ep_counters[ei] = 0
+                    step_counts[ei] = 0
+                    foot_contact_prev[ei] = False
 
-                    # Reset back to the SAME init
                     env.reset_idx(torch.tensor([ei], device=device))
                     apply_init(env, [ei], init_state, device)
 
                     if ep_len < 5:
                         continue
                     episode_lengths.append(ep_len)
+                    physical_steps.append(phys_steps)
                     collected += 1
-                    print(f"  Replay ep {collected}: len={ep_len}  "
+                    print(f"  Replay ep {collected}: "
+                          f"ep_len={ep_len}  physical_steps={phys_steps}  "
                           f"({collected}/{num_rollouts})")
                     if collected >= num_rollouts:
                         break
@@ -245,11 +261,13 @@ def phase_replay_init(runner, env, variant_idx, init_state,
                 print("  [Warning] Safety exit")
                 break
 
-    avg = float(np.mean(episode_lengths))
-    std = float(np.std(episode_lengths))
-    print(f"\n[Phase 2 done] avg={avg:.1f} ± {std:.1f}  "
+    avg     = float(np.mean(episode_lengths))
+    std     = float(np.std(episode_lengths))
+    avg_ps  = float(np.mean(physical_steps))
+    print(f"\n[Phase 2 done] avg_ep={avg:.1f}±{std:.1f}  "
+          f"avg_physical_steps={avg_ps:.1f}  "
           f"min/max={min(episode_lengths)}/{max(episode_lengths)}")
-    return episode_lengths
+    return episode_lengths, physical_steps
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -338,24 +356,28 @@ def main():
 
     # ── Phase 1 ───────────────────────────────────────────────────────────
     if args.find_best_init:
-        best_init, best_ep_len = phase_find_best_init(
+        best_init, best_ep_len, best_steps = phase_find_best_init(
             runner, env, variant_idx,
-            n_search       = args.init_search_rollouts,
-            max_ep_steps   = args.max_ep_steps,
-            min_ep_filter  = args.min_ep_filter,
-            device         = device,
-            save_path      = args.init_save)
+            n_search      = args.init_search_rollouts,
+            max_ep_steps  = args.max_ep_steps,
+            min_ep_filter = args.min_ep_filter,
+            device        = device,
+            save_path     = args.init_save)
 
         if best_init is None:
             print("Search found nothing. Exiting.")
             return
 
-        # Also run a quick replay to confirm
-        eps = phase_replay_init(runner, env, variant_idx,
-                                 best_init, 5, args.max_ep_steps, device)
-        output = {"mode": "find_best_init", "best_ep_len": best_ep_len,
-                  "init_save": args.init_save,
-                  "confirm_replay": eps}
+        eps, phys = phase_replay_init(runner, env, variant_idx,
+                                       best_init, 5, args.max_ep_steps, device)
+        output = {
+            "mode":           "find_best_init",
+            "best_ep_len":    best_ep_len,
+            "best_steps":     best_steps,
+            "init_save":      args.init_save,
+            "confirm_replay_eps":   eps,
+            "confirm_replay_steps": phys,
+        }
         with open(args.out, "wb") as f:
             pickle.dump(output, f)
         print(f"Saved search results → {args.out}")
@@ -363,24 +385,30 @@ def main():
 
     # ── Phase 2 ───────────────────────────────────────────────────────────
     if args.replay_init:
-        saved     = torch.load(args.replay_init, map_location="cpu")
-        init_state = saved["init_state"]
+        saved       = torch.load(args.replay_init, map_location="cpu")
+        init_state  = saved["init_state"]
         orig_ep_len = saved.get("best_ep_len", "unknown")
-        print(f"\nLoaded init state → {args.replay_init}  "
-              f"(originally gave {orig_ep_len} steps)")
+        orig_steps  = saved.get("best_steps",  "unknown")
+        print(f"\nLoaded init → {args.replay_init}  "
+              f"(originally: ep_len={orig_ep_len}  physical_steps={orig_steps})")
 
-        eps = phase_replay_init(runner, env, variant_idx,
-                                 init_state, args.num_eval_rollouts,
-                                 args.max_ep_steps, device)
+        eps, phys = phase_replay_init(runner, env, variant_idx,
+                                       init_state, args.num_eval_rollouts,
+                                       args.max_ep_steps, device)
 
         avg_ep = float(np.mean(eps))
         std_ep = float(np.std(eps))
-        print(f"\n── Replay Results for '{args.variant_name}' ──")
-        print(f"  Original best ep : {orig_ep_len} steps")
-        print(f"  Replayed avg     : {avg_ep:.1f} ± {std_ep:.1f} steps")
-        print(f"  Replayed min/max : {min(eps)}/{max(eps)}")
+        avg_ps = float(np.mean(phys))
+        std_ps = float(np.std(phys))
 
-        # Record trajectory from replayed init
+        print(f"\n── Replay Results for '{args.variant_name}' ──")
+        print(f"  Original        : ep_len={orig_ep_len}  physical_steps={orig_steps}")
+        print(f"  Replayed avg    : ep_len={avg_ep:.1f}±{std_ep:.1f}  "
+              f"physical_steps={avg_ps:.1f}±{std_ps:.1f}")
+        print(f"  Min/Max ep      : {min(eps)}/{max(eps)}")
+        print(f"  Min/Max steps   : {min(phys)}/{max(phys)}")
+
+        # Record trajectory
         print(f"\n── Recording {args.num_steps} steps ──")
         env.reset_idx(torch.arange(env.num_envs, device=device))
         env_ids_v = (env.env_variant_ids == variant_idx).nonzero(as_tuple=True)[0]
@@ -388,9 +416,12 @@ def main():
         runner.commands[:, 0] = args.cmd_vx
         obs = runner._get_obs_normalized(update_stats=False)
         ei  = env_ids_v[0].item()
-        print(f"Recording env {ei}")
 
-        traj = []
+        fi             = runner.obs_builder.feet_indices
+        traj           = []
+        phys_step_cnt  = 0
+        prev_contact   = torch.zeros(2, dtype=torch.bool, device=device)
+
         runner.actor_critic.eval()
         with torch.no_grad():
             for step in range(args.num_steps):
@@ -399,34 +430,59 @@ def main():
                 real_actions = act[:, ~act_mask].clamp(-1., 1.)
                 obs, _, _, _ = runner._step(real_actions)
                 obs          = runner._normalize_obs(obs, update_stats=False)
+
                 root = env.root_states[ei].cpu().numpy()
                 dof  = env.dof_pos[ei].cpu().numpy()
-                has_feet = hasattr(env, 'feet_indices')
-                lf_z = env.contact_forces[ei, env.feet_indices[0], 2].item() if has_feet else 0.
-                rf_z = env.contact_forces[ei, env.feet_indices[1], 2].item() if has_feet else 0.
+
+                lf_z = env.contact_forces[ei, fi[0], 2].item()
+                rf_z = env.contact_forces[ei, fi[1], 2].item()
+                lf_c = abs(lf_z) > 1.
+                rf_c = abs(rf_z) > 1.
+
+                # Count touchdown events
+                cur_contact = torch.tensor([lf_c, rf_c], dtype=torch.bool, device=device)
+                if ((~prev_contact) & cur_contact).any():
+                    phys_step_cnt += 1
+                prev_contact = cur_contact.clone()
+
                 traj.append({
-                    "xyz": root[:3].copy(), "quat": root[3:7].copy(),
-                    "dof_pos": dof.copy(), "step": step,
-                    "left_fz": lf_z, "right_fz": rf_z,
-                    "walking": abs(lf_z) > 1. or abs(rf_z) > 1.,
+                    "xyz":          root[:3].copy(),
+                    "quat":         root[3:7].copy(),
+                    "dof_pos":      dof.copy(),
+                    "step":         step,
+                    "left_fz":      lf_z,
+                    "right_fz":     rf_z,
+                    "walking":      lf_c or rf_c,
+                    "phys_step":    phys_step_cnt,
                 })
                 if step % 100 == 0:
-                    print(f"  step {step}/{args.num_steps}  h={root[2]:.3f}")
+                    print(f"  step {step}/{args.num_steps}  "
+                          f"h={root[2]:.3f}  "
+                          f"physical_steps_so_far={phys_step_cnt}")
 
         walk_pct = sum(1 for f in traj if f["walking"]) / len(traj) * 100
+        print(f"\nTotal physical steps in recorded trajectory: {phys_step_cnt}")
+        print(f"Walk quality: {walk_pct:.1f}% steps with foot contact")
+
         output = {
-            "mode": "replay",
-            "trajectory": traj, "dof_names": env.dof_names,
-            "variant_name": args.variant_name,
-            "original_best_ep_len": orig_ep_len,
-            "replayed_eps": eps,
-            "avg_ep": avg_ep, "std_ep": std_ep,
-            "walk_quality_pct": walk_pct,
+            "mode":                  "replay",
+            "trajectory":            traj,
+            "dof_names":             env.dof_names,
+            "variant_name":          args.variant_name,
+            "original_best_ep_len":  orig_ep_len,
+            "original_best_steps":   orig_steps,
+            "replayed_eps":          eps,
+            "replayed_phys_steps":   phys,
+            "avg_ep":                avg_ep,
+            "std_ep":                std_ep,
+            "avg_phys_steps":        avg_ps,
+            "std_phys_steps":        std_ps,
+            "traj_phys_steps":       phys_step_cnt,
+            "walk_quality_pct":      walk_pct,
         }
         with open(args.out, "wb") as f:
             pickle.dump(output, f)
-        print(f"\nSaved → {args.out}  ({len(traj)} frames)  "
-              f"walk_quality={walk_pct:.1f}%")
+        print(f"Saved → {args.out}  ({len(traj)} frames)")
         return
 
     print("Specify --find_best_init or --replay_init")
