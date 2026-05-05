@@ -66,7 +66,7 @@ torchaudio==2.3.1+cu121
 torchvision==0.18.1+cu121
 triton==2.3.1
 typing_extensions==4.13.2
--e git+https://github.com/unitreerobotics/unitree_rl_gym.git@276801e46c5d433564f24658bac64f254b7d2d4b#egg=unitree_rl_gym
+-e git+https://github.com/hitesh-vs/unitree_rl_gym@07f11195595978cc4b28c14a55ec5e3152fd7a12#egg=unitree_rl_gym
 urllib3==2.2.3
 Werkzeug==3.0.6
 zipp==3.20.2
