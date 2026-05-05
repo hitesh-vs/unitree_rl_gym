@@ -176,3 +176,6 @@ output_*
 *.json
 *.urdf
 *.pdf
+trajs_bkp/
+attention_maps_bkp/
+eval_results_bkp/
