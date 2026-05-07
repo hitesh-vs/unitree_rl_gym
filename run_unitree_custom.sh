@@ -66,5 +66,6 @@ python modular_policy/train_modular.py \
     --out_dir ./output_base_finetune \
     --seed 1409 \
     --graph_encoding none \
-    --resume /home/sviswasam/dr/unitree_rl_gym/output_baseline_results2/Apr11_18-52-43/model_400.pt\
+    # Use this to resume from ckpt
+    #--resume /home/sviswasam/dr/unitree_rl_gym/output_baseline_results2/Apr11_18-52-43/model_400.pt\
     --max_iters 2000 \
