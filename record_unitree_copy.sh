@@ -96,7 +96,7 @@ export TORCH_EXTENSIONS_DIR=/home/sviswasam/.cache/torch_extensions/py38_cu121
 # output_film_results2/Apr11_18-53-28/model_400.pt
 
 # FiLM model
-python deploy/deploy_mujoco/record_best_traj2.py \
+python deploy/deploy_mujoco/record_traj_isaac.py \
     --checkpoint output_film_results2/Apr11_18-53-28/model_400.pt \
     --xml_path /home/sviswasam/dr/ModuMorph/modular/unitree_g1_actual/xml/g1_12dof_stripped.xml \
     --variants_metadata resources/robots/g1_variants_targeted/variants_metadata.json \
