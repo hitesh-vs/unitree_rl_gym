@@ -1,0 +1,53 @@
+# G1 Robot Training Configuration for Transformer+GCN Policy
+# Run: python legged_gym/scripts/train_g1_custom.py --cfg config/g1/default.yaml
+
+seed: 42
+
+env:
+  num_envs: 4096
+  # Graph encoding mode: 'none' (disabled), 'onehot', or 'topological'
+  graph_mode: topological
+
+model:
+  # Observation / action dimensions – overridden automatically at runtime
+  obs_dim: 131  # 47 proprioceptive + num_actions (12) × 7 morpho features
+  act_dim: 12
+  # Number of limbs = graph nodes – overridden from URDF at runtime
+  num_limbs: 13
+
+  # Graph encoding mode (must match env.graph_mode)
+  graph_mode: topological
+
+  # GCN settings
+  # 4 total layers: [input → hidden1 → hidden2 → hidden3 → output]
+  gcn_hidden_dims: [128, 64, 32]
+  gcn_output_dim: 23
+  gcn_normalization: layernorm
+  # Input node feature dim – overridden from graph parser at runtime
+  # topological mode (3) + per-link inertial context (7) = 10
+  node_feature_dim: 10
+
+  # Transformer settings
+  d_model: 128
+  num_heads: 2
+  num_layers: 5
+  dim_feedforward: 1024
+  dropout: 0.0
+  use_fixed_attention: true
+
+ppo:
+  lr: 3.0e-4
+  clip_ratio: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 1.0
+  num_epochs: 5
+  batch_size: 4096
+  num_steps: 24
+  gamma: 0.99
+  lam: 0.95
+
+training:
+  max_iterations: 10000
+  save_interval: 500
+  log_interval: 50
